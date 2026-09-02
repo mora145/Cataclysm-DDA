@@ -77,6 +77,7 @@
 #include "monster.h"
 #include "mtype.h"
 #include "npc.h"
+#include "npc_ai_event_stream.h"
 #include "options.h"
 #include "output.h"
 #include "overmap_ui.h"
@@ -7443,11 +7444,17 @@ std::unique_ptr<activity_actor> clear_rubble_activity_actor::deserialize( JsonVa
     return actor.clone();
 }
 
-void firstaid_activity_actor::start( player_activity &act, Character & )
+void firstaid_activity_actor::start( player_activity &act, Character &who )
 {
     act.moves_total = moves;
     act.moves_left = moves;
     act.name = name;
+    Character *patient = patientID == get_avatar().getID() ? &get_avatar() :
+                         dynamic_cast<Character *>( g->find_npc( patientID ) );
+    npc_ai::record_creature_world_event( npc_ai::world_event_type::heal_started,
+            &who, patient, 76, "firstaid_activity_actor::start",
+            who.disp_name() + " empezo a atender a " +
+            ( patient != nullptr ? patient->disp_name() : std::string( "un paciente" ) ) + "." );
 }
 
 void firstaid_activity_actor::finish( player_activity &act, Character &who )
@@ -7488,6 +7495,11 @@ void firstaid_activity_actor::finish( player_activity &act, Character &who )
     const bodypart_id healed = bodypart_id( act.str_values[0] );
     int charges_consumed = actor->finish_using( who, *patient,
                            *used_tool, healed );
+    npc_ai::record_creature_world_event( npc_ai::world_event_type::heal_completed,
+            &who, patient, 82, "firstaid_activity_actor::finish",
+            who.disp_name() + " termino de atender a " + patient->disp_name() + " en " +
+            body_part_name_accusative( healed ) + ".", true, 0, 0, 0, 0, 0,
+            body_part_name_accusative( healed ) );
     std::list<item>used;
     if( used_tool->has_flag( flag_SINGLE_USE ) ) {
         it.remove_item();

@@ -90,6 +90,7 @@
 #include "mtype.h"
 #include "mutation.h"
 #include "npc.h"
+#include "npc_ai_equipment_memory.h"
 #include "omdata.h"
 #include "options.h"
 #include "output.h"
@@ -2035,7 +2036,10 @@ void Character::on_try_dodge()
 {
     ret_val<void> can_dodge = can_try_dodge();
     if( !can_dodge.success() ) {
-        add_msg( m_bad, can_dodge.c_str() );
+        // Route NPC messages through the virtual formatter so <npcname> is
+        // replaced.  This changes presentation only; dodge/stamina mechanics
+        // remain exactly as decided by can_try_dodge().
+        add_msg_player_or_npc( m_bad, can_dodge.c_str(), can_dodge.c_str() );
         return;
     }
 
@@ -6804,10 +6808,6 @@ void Character::invalidate_leak_level_cache()
 
 int Character::get_stamina() const
 {
-    if( is_npc() ) {
-        // No point in doing a bunch of checks on NPCs for now since they can't use stamina.
-        return get_stamina_max();
-    }
     return stamina;
 }
 
@@ -6938,8 +6938,7 @@ void Character::burn_energy_all( int mod )
 
 void Character::mod_stamina( int mod )
 {
-    // TODO: Make NPCs smart enough to use stamina
-    if( is_npc() || has_trait( trait_DEBUG_STAMINA ) ) {
+    if( has_trait( trait_DEBUG_STAMINA ) ) {
         return;
     }
 
@@ -8314,6 +8313,8 @@ void Character::apply_damage( Creature *source, bodypart_id hurt, int dam,
         can_drop( weapon ).success() ) {
         add_msg_if_player( _( "You are no longer able to wield your %s and drop it!" ),
                            weapon.display_name() );
+        npc_ai::remember_involuntary_weapon_drop( *this, weapon, pos_abs(),
+                "injury_tumbling" );
         put_into_vehicle_or_drop( *this, item_drop_reason::tumbling, { weapon } );
         i_rem( &weapon );
     }

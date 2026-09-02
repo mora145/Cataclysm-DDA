@@ -98,6 +98,21 @@
 #include "mtype.h"
 #include "mutation.h"
 #include "npc.h"
+#include "npc_ai_async.h"
+#include "npc_ai_context.h"
+#include "npc_ai_memory.h"
+#include "npc_ai_interior.h"
+#include "npc_ai_rescue.h"
+#include "npc_ai_tactical.h"
+#include "npc_ai_watchlist.h"
+#include "npc_ai_action_parser.h"
+#include "npc_ai_pickup.h"
+#include "npc_ai_batch_pickup.h"
+#include "npc_ai_wield.h"
+#include "npc_ai_database.h"
+#include "npc_ai_equipment.h"
+#include "npc_ai_fire.h"
+#include "npc_ai_vehicle_unload.h"
 #include "npc_class.h"
 #include "npc_opinion.h"
 #include "npctalk.h"
@@ -650,6 +665,7 @@ int npc_trading::cash_to_favor( const npc &, int cash )
 enum npc_chat_menu {
     NPC_CHAT_DONE,
     NPC_CHAT_TALK,
+    NPC_CHAT_AI_TALK,
     NPC_CHAT_YELL,
     NPC_CHAT_EMOTE,
     NPC_CHAT_START_SEMINAR,
@@ -721,6 +737,211 @@ static int npc_select_menu( const std::vector<npc *> &npc_list, const std::strin
         return nmenu.ret;
     }
 
+}
+
+std::vector<npc *> npc_ai::get_nearby_ai_talkers( const bool allies_only )
+{
+    map &here = get_map();
+    avatar &player = get_avatar();
+    const std::vector<Creature *> visible_npcs = g->get_creatures_if( [&]( const Creature & guy ) {
+        if( !guy.is_npc() || player.posz() != guy.posz() ||
+            !player.sees( here, guy.pos_bub( here ) ) ||
+            rl_dist( player.pos_abs(), guy.pos_abs() ) > SEEX * 2 ) {
+            return false;
+        }
+        const npc *candidate = guy.as_npc();
+        return candidate->is_active() && ( !allies_only || candidate->is_player_ally() );
+    } );
+
+    std::vector<npc *> result;
+    result.reserve( visible_npcs.size() );
+    for( Creature *candidate : visible_npcs ) {
+        result.push_back( candidate->as_npc() );
+    }
+    return result;
+}
+
+std::string npc_ai::ai_conversation_group_target_name( const std::string &language_code )
+{
+    const bool spanish = language_code == "es" || language_code.rfind( "es_", 0 ) == 0 ||
+                         language_code.rfind( "es-", 0 ) == 0;
+    return spanish ? "todos" : _( "everyone" );
+}
+
+std::vector<std::string> npc_ai::ai_conversation_menu_entries(
+    const std::vector<npc *> &talkers )
+{
+    std::vector<std::string> entries;
+    entries.reserve( talkers.size() + ( talkers.size() > 1 ? 1 : 0 ) );
+    if( talkers.size() > 1 ) {
+        entries.emplace_back( string_format( _( "Talk to %s" ),
+                                             ai_conversation_group_target_name(
+                                                 current_dialogue_language_code() ) ) );
+    }
+    for( const npc *talker : talkers ) {
+        entries.push_back( string_format( _( "Talk to %s" ), talker->get_name() ) );
+    }
+    return entries;
+}
+
+int npc_ai::ai_conversation_menu_hotkey( const std::size_t entry_index )
+{
+    if( entry_index < 9 ) {
+        return static_cast<int>( '1' + entry_index );
+    }
+    // The tenth conventional uilist numeric hotkey is zero; exceptionally
+    // large companion groups then fall back to the normal letter assignment.
+    return entry_index == 9 ? '0' : MENU_AUTOASSIGN;
+}
+
+npc_ai::ai_conversation_selection npc_ai::select_ai_conversation_targets(
+    const std::vector<npc *> &talkers, const ai_talker_selector &selector )
+{
+    ai_conversation_selection result;
+    if( talkers.empty() ) {
+        return result;
+    }
+    if( talkers.size() == 1 ) {
+        result.targets.push_back( talkers.front() );
+        return result;
+    }
+
+    const int selected = selector( talkers );
+    if( selected < 0 || static_cast<std::size_t>( selected ) > talkers.size() ) {
+        return result;
+    }
+    if( selected == 0 ) {
+        result.targets = talkers;
+        result.everyone = true;
+    } else {
+        result.targets.push_back( talkers[static_cast<std::size_t>( selected - 1 )] );
+    }
+    return result;
+}
+
+std::string npc_ai::ai_player_speech_log_line( const bool everyone,
+        const std::string &target_name, const std::string &player_line,
+        const std::string &language_code )
+{
+    const bool spanish = language_code == "es" || language_code.rfind( "es_", 0 ) == 0 ||
+                         language_code.rfind( "es-", 0 ) == 0;
+    if( spanish ) {
+        return everyone ? string_format( "Dices al grupo: \"%s\"", player_line ) :
+               string_format( "Dices a %s: \"%s\"", target_name, player_line );
+    }
+    return everyone ? string_format( _( "You say to the group: \"%s\"" ), player_line ) :
+           string_format( _( "You say to %1$s: \"%2$s\"" ), target_name, player_line );
+}
+
+void npc_ai::log_ai_player_speech( const bool everyone, const std::string &target_name,
+                                   const std::string &player_line )
+{
+    add_msg( m_neutral, "%s", ai_player_speech_log_line(
+                 everyone, target_name, player_line, current_dialogue_language_code() ) );
+}
+
+std::string npc_ai::ai_talking_status_line( const bool everyone,
+        const std::string &target_name, const std::string &language_code )
+{
+    if( everyone ) {
+        return {};
+    }
+    const bool spanish = language_code == "es" || language_code.rfind( "es_", 0 ) == 0 ||
+                         language_code.rfind( "es-", 0 ) == 0;
+    if( spanish ) {
+        return string_format( "Hablando con %s...", target_name );
+    }
+    return string_format( _( "Talking with %s..." ), target_name );
+}
+
+std::size_t npc_ai::enqueue_group_ai_dialogue( const std::vector<npc *> &talkers,
+        const std::string &player_line, std::uint64_t conversation_turn_id )
+{
+    if( conversation_turn_id == 0 ) {
+        conversation_turn_id = next_conversation_turn_id();
+    }
+    std::size_t accepted = 0;
+    for( npc *responder : talkers ) {
+        if( responder == nullptr || !responder->is_active() || responder->is_dead_state() ||
+            responder->is_hallucination() ) {
+            continue;
+        }
+        std::string prompt = build_npc_prompt( *responder, player_line );
+        prompt += "\n\n=== CONVERSACION DIRIGIDA AL GRUPO ===\n"
+                  "El jugador envio este mismo mensaje a todos los NPC elegibles. Responde desde "
+                  "tu propia personalidad, memoria, relacion, estado emocional y percepcion. "
+                  "No inventes consenso ni hables por los demas. Tu respuesta es independiente.\n";
+        if( enqueue_group_dialogue( *responder, player_line, prompt,
+                                    conversation_turn_id ).accepted ) {
+            ++accepted;
+        }
+    }
+    return accepted;
+}
+
+npc *npc_ai::select_ai_conversation_target( const std::vector<npc *> &talkers,
+        const ai_talker_selector &selector )
+{
+    const ai_conversation_selection selected = select_ai_conversation_targets( talkers, selector );
+    return !selected.everyone && selected.targets.size() == 1 ? selected.targets.front() : nullptr;
+}
+
+static int ai_conversation_select_menu( const std::vector<npc *> &talkers,
+                                        const std::string &prompt )
+{
+    uilist menu;
+    std::vector<tripoint_bub_ms> locations;
+    menu.text = prompt;
+    const std::vector<std::string> entries = npc_ai::ai_conversation_menu_entries( talkers );
+    const bool has_group_entry = talkers.size() > 1;
+    locations.reserve( entries.size() );
+    for( std::size_t i = 0; i < entries.size(); ++i ) {
+        menu.addentry( static_cast<int>( i ), true, npc_ai::ai_conversation_menu_hotkey( i ),
+                       entries[i] );
+        locations.emplace_back( has_group_entry && i == 0 ? get_avatar().pos_bub() :
+                                talkers[i - ( has_group_entry ? 1 : 0 )]->pos_bub() );
+    }
+    pointmenu_cb callback( locations );
+    menu.callback = &callback;
+    menu.query();
+    return menu.ret;
+}
+
+static int npc_move_select_menu( const std::vector<npc *> &followers )
+{
+    uilist menu;
+    menu.text = _( "Who should move?" );
+    std::vector<tripoint_bub_ms> locations;
+    menu.addentry( 0, true, '1', _( "Everyone" ) );
+    locations.emplace_back( get_avatar().pos_bub() );
+    for( std::size_t index = 0; index < followers.size(); ++index ) {
+        const int hotkey = index < 8 ? '2' + static_cast<int>( index ) : MENU_AUTOASSIGN;
+        menu.addentry( static_cast<int>( index + 1 ), true, hotkey,
+                       followers[index]->name_and_activity() );
+        locations.emplace_back( followers[index]->pos_bub() );
+    }
+    pointmenu_cb callback( locations );
+    menu.callback = &callback;
+    menu.query();
+    return menu.ret;
+}
+
+static std::string assign_npc_move_destination( const std::vector<npc *> &targets,
+        const tripoint_bub_ms &destination )
+{
+    map &here = get_map();
+    npc_ai::cancel_rescues_for_new_order( targets,
+                                          "superseded by an explicit move order" );
+    for( npc *target : targets ) {
+        if( target != nullptr ) {
+            target->goto_to_this_pos = here.get_abs( destination );
+        }
+    }
+    if( targets.size() > 1 ) {
+        return _( "Everyone move there!" );
+    }
+    return targets.empty() || targets.front() == nullptr ? std::string() :
+           string_format( _( "Move there, %s!" ), targets.front()->get_name() );
 }
 
 static int creature_select_menu( const std::vector<Creature *> &talker_list,
@@ -1025,6 +1246,319 @@ static void tell_magic_veh_stop_following()
     }
 }
 
+void game::ai_talk()
+{
+    ai_talk( npc_ai::get_nearby_ai_talkers( true ),
+             _( "Who do you want to talk to?" ), true );
+}
+
+void game::npc_move_command()
+{
+    Character &player = get_player_character();
+    const int volume = player.get_shout_volume();
+    const std::vector<npc *> followers = get_npcs_if( [&]( const npc &candidate ) {
+        return candidate.is_player_ally() && candidate.is_following() &&
+               candidate.can_hear( player.pos_bub(), volume );
+    } );
+    if( followers.empty() ) {
+        add_msg( m_info, _( "No companion is available to move." ) );
+        return;
+    }
+
+    std::vector<npc *> selected;
+    if( followers.size() == 1 ) {
+        selected.push_back( followers.front() );
+    } else {
+        const int choice = npc_move_select_menu( followers );
+        if( choice < 0 ) {
+            return;
+        }
+        if( choice == 0 ) {
+            selected = followers;
+        } else if( static_cast<std::size_t>( choice ) <= followers.size() ) {
+            selected.push_back( followers[static_cast<std::size_t>( choice - 1 )] );
+        } else {
+            return;
+        }
+    }
+
+    const std::optional<tripoint_bub_ms> destination = look_around();
+    if( !destination ) {
+        return;
+    }
+    map &here = get_map();
+    if( here.impassable( *destination ) ) {
+        add_msg( m_info, _( "This destination can't be reached." ) );
+        return;
+    }
+    const std::string order = assign_npc_move_destination( selected, *destination );
+    if( !order.empty() ) {
+        const std::string quoted = string_format( _( "\"%s\"" ), order );
+        add_msg( _( "You yell %s" ), quoted );
+        player.shout( string_format( _( "%s yelling %s" ), player.disp_name(), quoted ), true );
+    }
+    player.mod_moves( -player.get_speed() );
+}
+
+void game::ai_talk( const std::vector<npc *> &talkers, const std::string &selection_prompt,
+                    const bool report_no_available )
+{
+    if( talkers.empty() ) {
+        if( report_no_available ) {
+            add_msg( m_info, _( "No companion is available to talk." ) );
+        }
+        return;
+    }
+
+    const npc_ai::ai_conversation_selection selection = npc_ai::select_ai_conversation_targets( talkers,
+    [&]( const std::vector<npc *> &candidates ) {
+        return ai_conversation_select_menu( candidates, selection_prompt );
+    } );
+    if( selection.targets.empty() ) {
+        return;
+    }
+    npc *guy = selection.targets.front();
+
+    string_input_popup popup;
+    const std::string group_target =
+        npc_ai::ai_conversation_group_target_name( npc_ai::current_dialogue_language_code() );
+    popup.title( selection.everyone ? string_format( _( "AI conversation with %s" ), group_target ) :
+                 string_format( _( "AI conversation with %s" ), guy->get_name() ) )
+    .width( 64 )
+    .description( selection.everyone ? string_format( _( "What do you want to say to %s?" ),
+                  group_target ) :
+                  string_format( _( "What do you want to say to %s?" ), guy->get_name() ) )
+    .identifier( "npc_ai_sentence" )
+    .max_length( 256 )
+    .query();
+
+    const std::string player_line = popup.text();
+    if( player_line.empty() ) {
+        return;
+    }
+    npc_ai::log_ai_player_speech( selection.everyone, guy->get_name(), player_line );
+    const auto log_command_intercept = [&]( const char *type, const char *state ) {
+        add_msg_debug( debugmode::DF_NPC_ITEMAI,
+                       "%s COMMAND_INTERCEPTED=%s COMMAND_STATE=%s "
+                       "DIALOGUE_SUPPRESSED=yes ORIGIN=%s",
+                       guy->get_name(), type, state,
+                       selection.everyone ? "GROUP_PLAYER_DIALOGUE" :
+                       "DIRECT_PLAYER_DIALOGUE" );
+    };
+
+    if( npc_ai::parse_structured_voice_order( player_line ) ==
+        npc_ai::structured_voice_order::enter_nearest_reachable_safe_interior ) {
+        const npc_ai::interior_order_result interior =
+            npc_ai::execute_enter_nearest_reachable_safe_interior( selection.targets );
+        log_command_intercept( "INTERIOR", interior.success ? "ACCEPTED" : "REJECTED" );
+        if( interior.success ) {
+            guy->say( interior.message );
+            npc_ai::remember_exchange( *guy, player_line, interior.message );
+        } else {
+            add_msg( m_info, interior.message );
+        }
+        return;
+    }
+
+    const npc_ai::tactical_order parsed_tactical = npc_ai::parse_tactical_order( player_line );
+    if( parsed_tactical != npc_ai::tactical_order::none ) {
+        npc_ai::cancel_rescues_for_new_order( selection.targets,
+                                              "superseded by a tactical order" );
+    }
+    const npc_ai::tactical_order_result tactical_result =
+        npc_ai::execute_tactical_order( selection.targets, player_line );
+    if( tactical_result.handled ) {
+        log_command_intercept( "TACTICAL",
+                               tactical_result.affected.empty() ? "REJECTED" : "ACCEPTED" );
+        if( tactical_result.affected.empty() ) {
+            add_msg( m_info, _( "No eligible ally received that order." ) );
+            return;
+        }
+        const std::string reply = tactical_result.order == npc_ai::tactical_order::guard ?
+                                  _( "I'll guard this position." ) : _( "I'll follow you." );
+        npc *speaker = tactical_result.affected.front();
+        if( speaker != nullptr ) {
+            speaker->say( reply );
+            npc_ai::remember_exchange( *speaker, player_line, reply );
+        }
+        return;
+    }
+
+    const npc_ai::rescue_command_result rescue_result =
+        npc_ai::execute_rescue_order( selection.targets, player_line, [&]() {
+        return look_around();
+    } );
+    if( rescue_result.handled ) {
+        log_command_intercept( "RESCUE", rescue_result.started ? "ACCEPTED" :
+                               rescue_result.cancelled ? "CANCELLED" : "REJECTED" );
+        if( rescue_result.cancelled ) {
+            return;
+        }
+        npc *speaker = rescue_result.rescuer != nullptr ? rescue_result.rescuer : guy;
+        if( speaker != nullptr && !rescue_result.message.empty() ) {
+            speaker->say( rescue_result.message );
+            npc_ai::remember_exchange( *speaker, player_line, rescue_result.message );
+        }
+        return;
+    }
+
+    if( selection.everyone ) {
+        const npc_ai::group_equipment_command_result equipment_group =
+            npc_ai::execute_group_equipment_command( selection.targets, player_line );
+        if( equipment_group.handled ) {
+            log_command_intercept( "EQUIPMENT",
+                                   equipment_group.pending > 0 ? "PENDING" :
+                                   equipment_group.affected.empty() ? "REJECTED" : "ACCEPTED" );
+            if( equipment_group.affected.empty() ) {
+                npc *failure_speaker = equipment_group.failure_speaker != nullptr ?
+                                       equipment_group.failure_speaker : selection.targets.front();
+                npc_ai::say_command_reply( *failure_speaker,
+                                           equipment_group.reply.empty() ?
+                                           _( "I couldn't carry out that equipment order." ) :
+                                           equipment_group.reply );
+                return;
+            }
+            npc *speaker = equipment_group.affected.front();
+            if( speaker != nullptr ) {
+                npc_ai::say_command_reply( *speaker, equipment_group.reply );
+                npc_ai::remember_exchange( *speaker, player_line, equipment_group.reply );
+            }
+            if( equipment_group.failed > 0 && equipment_group.failure_speaker != nullptr ) {
+                npc_ai::say_command_reply( *equipment_group.failure_speaker,
+                                           equipment_group.failure_reply );
+                npc_ai::remember_exchange( *equipment_group.failure_speaker, player_line,
+                                           equipment_group.failure_reply );
+            }
+            return;
+        }
+
+        const npc_ai::group_acquisition_command_result acquisition_group =
+            npc_ai::execute_group_acquisition_command( selection.targets, player_line );
+        if( acquisition_group.handled ) {
+            log_command_intercept( "ACQUISITION",
+                                   acquisition_group.pending > 0 ? "PENDING" :
+                                   !acquisition_group.affected.empty() ? "ACCEPTED" : "REJECTED" );
+            if( !acquisition_group.reply.empty() && !acquisition_group.affected.empty() ) {
+                npc_ai::say_command_reply( *acquisition_group.affected.front(),
+                                           acquisition_group.reply );
+            }
+            if( acquisition_group.failed > 0 &&
+                acquisition_group.failure_speaker != nullptr &&
+                !acquisition_group.failure_reply.empty() ) {
+                npc_ai::say_command_reply( *acquisition_group.failure_speaker,
+                                           acquisition_group.failure_reply );
+            }
+            if( acquisition_group.pending > 0 ) {
+                add_msg( m_info, _( "Your companions are resolving the equipment order." ) );
+            }
+            return;
+        }
+    }
+
+    const npc_ai::database_status db_status = npc_ai::ensure_database_ready();
+    if( !db_status.success ) {
+        add_msg( m_bad, string_format( _( "AI database error: %s" ), db_status.error ) );
+    }
+
+    if( selection.everyone ) {
+        const std::uint64_t conversation_turn_id = npc_ai::next_conversation_turn_id();
+        const std::size_t accepted = npc_ai::enqueue_group_ai_dialogue( selection.targets,
+                                     player_line, conversation_turn_id );
+        if( accepted < selection.targets.size() ) {
+            add_msg( m_info, _( "One or more companions' dialogue queues are full." ) );
+        }
+        return;
+    }
+
+    const npc_ai::watch_action_result watch_action = npc_ai::parse_watch_action( *guy, player_line );
+    if( watch_action.attempted ) {
+        if( watch_action.pending ) {
+            add_msg( m_info, string_format( _( "Talking with %s..." ), guy->get_name() ) );
+        } else {
+            add_msg( m_info, string_format( _( "%s is still thinking about the previous question." ),
+                                           guy->get_name() ) );
+        }
+        return;
+    }
+
+    const npc_ai::start_fire_command_result start_fire_result =
+        npc_ai::try_handle_start_fire_command( *guy, player_line );
+    if( start_fire_result.handled ) {
+        log_command_intercept( "START_FIRE", start_fire_result.started ? "PENDING" :
+                               start_fire_result.success ? "ACCEPTED" : "REJECTED" );
+        guy->say( start_fire_result.message );
+        npc_ai::remember_exchange( *guy, player_line, start_fire_result.message );
+        return;
+    }
+
+    const npc_ai::vehicle_unload_command_result vehicle_unload_result =
+        npc_ai::try_handle_vehicle_unload_command( *guy, player_line );
+    if( vehicle_unload_result.handled ) {
+        log_command_intercept( "VEHICLE_UNLOAD", vehicle_unload_result.started ? "PENDING" :
+                               vehicle_unload_result.success ? "ACCEPTED" : "REJECTED" );
+        guy->say( vehicle_unload_result.message );
+        npc_ai::remember_exchange( *guy, player_line, vehicle_unload_result.message );
+        return;
+    }
+
+    const npc_ai::equipment_command_result equipment_result =
+        npc_ai::try_handle_equipment_command( *guy, player_line );
+    if( equipment_result.handled ) {
+        log_command_intercept( "EQUIPMENT", equipment_result.action_started ? "PENDING" :
+                               equipment_result.success ? "ACCEPTED" : "REJECTED" );
+        npc_ai::say_command_reply( *guy, equipment_result.message );
+        npc_ai::remember_exchange( *guy, player_line, equipment_result.message );
+        return;
+    }
+
+    const npc_ai::batch_pickup_command_result batch_pickup_result =
+        npc_ai::try_handle_batch_pickup_command( *guy, player_line );
+    if( batch_pickup_result.handled ) {
+        log_command_intercept( "BATCH_PICKUP",
+                               batch_pickup_result.success ? "PENDING" : "REJECTED" );
+        npc_ai::say_command_reply( *guy, batch_pickup_result.message );
+        npc_ai::remember_exchange( *guy, player_line, batch_pickup_result.message );
+        return;
+    }
+
+    const npc_ai::pickup_command_result pickup_result =
+        npc_ai::try_handle_pickup_command( *guy, player_line );
+    if( pickup_result.handled ) {
+        log_command_intercept( "ACQUISITION", pickup_result.pending || pickup_result.started ?
+                               "PENDING" : "REJECTED" );
+        if( pickup_result.pending ) {
+            add_msg( m_info, string_format( _( "Talking with %s..." ), guy->get_name() ) );
+        } else {
+            npc_ai::say_command_reply( *guy, pickup_result.message );
+            npc_ai::remember_exchange( *guy, player_line, pickup_result.message );
+        }
+        return;
+    }
+
+    const npc_ai::wield_command_result wield_result =
+        npc_ai::try_handle_wield_command( *guy, player_line );
+    if( wield_result.handled ) {
+        log_command_intercept( "WIELD", wield_result.pending || guy->ai_directed_pickup ? "PENDING" :
+                               wield_result.success ? "ACCEPTED" : "REJECTED" );
+        if( wield_result.pending ) {
+            add_msg( m_info, string_format( _( "Talking with %s..." ), guy->get_name() ) );
+        } else {
+            npc_ai::say_command_reply( *guy, wield_result.message );
+            npc_ai::remember_exchange( *guy, player_line, wield_result.message );
+        }
+        return;
+    }
+
+    const std::string prompt = npc_ai::build_npc_prompt( *guy, player_line );
+    add_msg( m_info, string_format( _( "Talking with %s..." ), guy->get_name() ) );
+
+    const npc_ai::ai_enqueue_result queued =
+        npc_ai::enqueue_direct_dialogue( *guy, player_line, prompt );
+    if( !queued.accepted ) {
+        add_msg( m_info, string_format( _( "%s's dialogue queue is full." ), guy->get_name() ) );
+    }
+}
+
 void game::chat()
 {
     map &here = get_map();
@@ -1041,6 +1575,8 @@ void game::chat()
                rl_dist( u.pos_abs(), guy.pos_abs() ) <= SEEX * 2;
     } );
     const int available_count = available.size();
+
+    const std::vector<npc *> ai_talkers = npc_ai::get_nearby_ai_talkers( false );
     const std::vector<npc *> followers = get_npcs_if( [&]( const npc & guy ) {
         return guy.is_player_ally() && guy.is_following() && guy.can_hear( u.pos_bub(), volume );
     } );
@@ -1105,6 +1641,13 @@ void game::chat()
         nmenu.addentry( NPC_CHAT_TALK, true, 't', available_count == 1 ?
                         string_format( _( "Talk to %s" ), title ) :
                         _( "Talk to…" ) );
+    }
+    if( !ai_talkers.empty() ) {
+        nmenu.addentry( NPC_CHAT_AI_TALK, true, 'I',
+                        ai_talkers.size() == 1 ?
+                        string_format( _( "Talk naturally with %s (AI)" ),
+                                       ai_talkers.front()->get_name() ) :
+                        _( "Talk naturally with someone (AI)…" ) );
     }
 
     if( !available_for_activities.empty() ) {
@@ -1186,6 +1729,11 @@ void game::chat()
             get_avatar().talk_to( get_talker_for( *available[npcselect] ) );
             break;
         }
+        case NPC_CHAT_AI_TALK: {
+            ai_talk( ai_talkers, _( "Who do you want to talk to?" ), false );
+            break;
+        }
+
         case NPC_CHAT_YELL:
             is_order = false;
             message = _( "loudly." );
@@ -1200,7 +1748,56 @@ void game::chat()
             .max_length( 128 )
             .query();
             yell_msg = popup.text();
-            is_order = false;
+
+            // CDDA-AI: temporary local Ollama bridge test.
+            if( yell_msg.rfind( "/ai ", 0 ) == 0 ) {
+                const std::string ai_prompt = yell_msg.substr( 4 );
+
+                if( ai_prompt.empty() ) {
+                    add_msg( m_bad, "Escribe algo despues de /ai" );
+                    return;
+                }
+
+                add_msg( m_info, _( "Sending message to the local AI..." ) );
+                const npc_ai::ai_enqueue_result queued =
+                    npc_ai::enqueue_legacy_ai_prompt( ai_prompt );
+                if( !queued.accepted ) {
+                    add_msg( m_info, _( "The local AI is still processing the previous message." ) );
+                }
+
+                return;
+            }
+            if( npc_ai::parse_structured_voice_order( yell_msg ) ==
+                npc_ai::structured_voice_order::enter_nearest_reachable_safe_interior ) {
+                const npc_ai::interior_order_result interior =
+                    npc_ai::execute_enter_nearest_reachable_safe_interior( followers );
+                if( !interior.success ) {
+                    add_msg( m_info, interior.message );
+                }
+                // Preserve the original sentence and vanilla sound, but mark
+                // recognized whitelist commands as orders for normal NPC sound handling.
+                is_order = true;
+            } else {
+                const npc_ai::rescue_command_result rescue_result =
+                    npc_ai::execute_rescue_order( followers, yell_msg, [&]() {
+                    return look_around();
+                } );
+                if( rescue_result.cancelled ) {
+                    return;
+                }
+                if( rescue_result.handled ) {
+                    is_order = true;
+                    npc *speaker = rescue_result.rescuer;
+                    if( speaker != nullptr && !rescue_result.message.empty() ) {
+                        speaker->say( rescue_result.message );
+                        npc_ai::remember_exchange( *speaker, yell_msg, rescue_result.message );
+                    } else if( !rescue_result.message.empty() ) {
+                        add_msg( m_info, rescue_result.message );
+                    }
+                } else {
+                    is_order = false;
+                }
+            }
             break;
         }
         case NPC_CHAT_EMOTE: {
@@ -1280,11 +1877,15 @@ void game::chat()
                 return;
             }
             if( npcselect == follower_count ) {
+                npc_ai::cancel_rescues_for_new_order( followers,
+                        "superseded by a guard order" );
                 for( npc *them : followers ) {
                     talk_function::assign_guard( *them );
                 }
                 yell_msg = _( "Everyone guard here!" );
             } else {
+                npc_ai::cancel_rescues_for_new_order( { followers[npcselect] },
+                        "superseded by a guard order" );
                 talk_function::assign_guard( *followers[npcselect] );
                 yell_msg = string_format( _( "Guard here, %s!" ), followers[npcselect]->get_name() );
             }
@@ -1308,13 +1909,9 @@ void game::chat()
             }
 
             if( npcselect == follower_count ) {
-                for( npc *them : followers ) {
-                    them->goto_to_this_pos = here.get_abs( *p );
-                }
-                yell_msg = _( "Everyone move there!" );
+                yell_msg = assign_npc_move_destination( followers, *p );
             } else {
-                followers[npcselect]->goto_to_this_pos = here.get_abs( *p );
-                yell_msg = string_format( _( "Move there, %s!" ), followers[npcselect]->get_name() );
+                yell_msg = assign_npc_move_destination( { followers[npcselect] }, *p );
             }
             break;
         }
@@ -1324,11 +1921,15 @@ void game::chat()
                 return;
             }
             if( npcselect == guard_count ) {
+                npc_ai::cancel_rescues_for_new_order( guards,
+                        "superseded by a follow order" );
                 for( npc *them : guards ) {
                     talk_function::stop_guard( *them );
                 }
                 yell_msg = _( "Everyone follow me!" );
             } else {
+                npc_ai::cancel_rescues_for_new_order( { guards[npcselect] },
+                        "superseded by a follow order" );
                 talk_function::stop_guard( *guards[npcselect] );
                 yell_msg = string_format( _( "Follow me, %s!" ), guards[npcselect]->get_name() );
             }
@@ -1366,6 +1967,7 @@ void game::chat()
             break;
         case NPC_CHAT_CLEAR_OVERRIDES:
             for( npc *p : followers ) {
+                npc_ai::cancel_rescue_for( *p, "orders were cancelled" );
                 talk_function::clear_overrides( *p );
             }
             yell_msg = _( "As you were." );
@@ -1403,6 +2005,8 @@ void game::chat()
             for( int i : npcs_selected ) {
 
                 npc *selected_npc = available_for_activities[i];
+                npc_ai::cancel_rescue_for( *selected_npc,
+                                           "superseded by an activity order" );
 
                 switch( activity ) {
                     case NPC_CHAT_ACTIVITIES_MOVE_LOOT: {
@@ -2423,7 +3027,11 @@ void parse_tags( std::string &phrase, const_talker const &u, const_talker const 
                 activity_name = _( "doing this and that" );
             }
             phrase.replace( fa, l, activity_name );
-        } else if( tag == "<punc>" ) {
+        } else if( tag.compare( 0, 5, "<punc" ) == 0 ) {
+            // "<punc>" plus leftover punctuation snippet tags such as
+            // "<punc…!>" / translator-mangled "<punc...!>".  expand() should
+            // already have replaced snippet categories; this is a safety net
+            // so they never surface as "Bad tag".
             switch( rng( 0, 2 ) ) {
                 case 0:
                     phrase.replace( fa, l, pgettext( "punctuation", "." ) );

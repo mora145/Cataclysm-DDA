@@ -203,6 +203,10 @@ std::string action_ident( action_id act )
             return "butcher";
         case ACTION_CHAT:
             return "chat";
+        case ACTION_AI_TALK:
+            return "ai_talk";
+        case ACTION_NPC_MOVE:
+            return "npc_move";
         case ACTION_LOOK:
             return "look";
         case ACTION_PEEK:
@@ -933,6 +937,8 @@ action_id handle_action_menu( map &here )
             REGISTER_ACTION( ACTION_OPEN );
             REGISTER_ACTION( ACTION_CLOSE );
             REGISTER_ACTION( ACTION_CHAT );
+            REGISTER_ACTION( ACTION_AI_TALK );
+            REGISTER_ACTION( ACTION_NPC_MOVE );
             REGISTER_ACTION( ACTION_PICKUP );
             REGISTER_ACTION( ACTION_PICKUP_ALL );
             REGISTER_ACTION( ACTION_GRAB );

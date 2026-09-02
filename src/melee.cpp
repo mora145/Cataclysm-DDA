@@ -60,6 +60,8 @@
 #include "mtype.h"
 #include "mutation.h"
 #include "npc.h"
+#include "npc_ai_equipment_memory.h"
+#include "npc_ai_event_stream.h"
 #include "output.h"
 #include "pimpl.h"
 #include "pocket_type.h"
@@ -677,6 +679,16 @@ bool Character::melee_attack_abstract( Creature &t, bool allow_special,
                                  t.times_combatted_player <= 100;
     Character &player_character = get_player_character();
     if( !hits ) {
+        if( !t.is_hallucination() ) {
+            npc_ai::record_creature_world_event( npc_ai::world_event_type::attack_missed,
+                    this, &t, 48, "Character::melee_attack_abstract",
+                    disp_name() + " fallo un ataque contra " + t.disp_name() + "." );
+            if( t.as_character() != nullptr ) {
+                npc_ai::record_creature_world_event( npc_ai::world_event_type::dodge,
+                        &t, this, 52, "Character::melee_attack_abstract",
+                        t.disp_name() + " esquivo el ataque de " + disp_name() + "." );
+            }
+        }
         int stumble_pen = stumble( *this, cur_weapon );
         sfx::generate_melee_sound( pos_bub(), t.pos_bub(), false, false );
 
@@ -891,6 +903,30 @@ bool Character::melee_attack_abstract( Creature &t, bool allow_special,
             sfx::generate_melee_sound( pos_bub(), t.pos_bub(), true, t.is_monster(), material );
             int dam = dealt_dam.total_damage();
             melee::melee_stats.damage_amount += dam;
+            const Character *injured = t.as_character();
+            const npc_ai::world_event_claim_level hit_claim =
+                injured != nullptr && injured->is_limb_broken( dealt_dam.bp_hit ) ?
+                npc_ai::world_event_claim_level::limb_disabled :
+                npc_ai::world_event_claim_level::hit_confirmed;
+            if( dam > 0 && !t.is_hallucination() ) {
+                npc_ai::record_creature_world_event(
+                    npc_ai::world_event_type::npc_attack, this, &t, 76,
+                    "Character::melee_attack_abstract",
+                    disp_name() + " golpeo a " + t.disp_name() + " en " +
+                    body_part_name_accusative( dealt_dam.bp_hit ) + " y causo " +
+                    std::to_string( dam ) + " de dano.", true, 0, 0, 0, 0, 0,
+                    body_part_name_accusative( dealt_dam.bp_hit ), dam, "melee", hit_claim );
+            }
+            if( critical_hit && dam >= std::max( 10, t.get_hp_max() / 10 ) &&
+                !t.is_hallucination() ) {
+                npc_ai::record_creature_world_event(
+                    npc_ai::world_event_type::significant_critical, this, &t, 88,
+                    "Character::melee_attack_abstract",
+                    disp_name() + " asesto un golpe critico significativo a " +
+                    t.disp_name() + " en " + body_part_name_accusative( dealt_dam.bp_hit ) +
+                    ".", true, 0, 0, 0, 0, 0,
+                    body_part_name_accusative( dealt_dam.bp_hit ), dam, "melee", hit_claim );
+            }
 
             if( can_train_melee ) {
                 t.times_combatted_player++;
@@ -1904,6 +1940,8 @@ void Character::perform_technique( const ma_technique &technique, Creature &t,
 
     if( technique.disarms && you != nullptr && you->is_armed() && !you->is_hallucination() ) {
         item weap = you->remove_weapon();
+        npc_ai::remember_involuntary_weapon_drop( *you, weap, you->pos_abs(),
+                "melee_disarm" );
         here.add_item_or_charges( you->pos_bub(), weap );
         if( you->is_avatar() ) {
             add_msg_if_npc( _( "<npcname> disarms you!" ) );

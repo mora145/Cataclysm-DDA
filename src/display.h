@@ -110,6 +110,8 @@ std::string sundial_time_text_color( const Character &u, int width );
 
 // Temperature at character location, if they have a thermometer
 std::string get_temp( const Character &u );
+// Whether the character carries an item that currently emits light
+std::string active_light_indicator( const Character &u );
 
 // Text descriptor for given activity level, ex. "Light", "Brisk", "Extreme"
 std::string activity_level_str( float level );

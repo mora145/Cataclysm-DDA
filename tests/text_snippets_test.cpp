@@ -30,3 +30,27 @@ TEST_CASE( "text_snippet_escape", "[text_snippets]" )
     CHECK( SNIPPET.expand( "Foo <lt> bar <gt> baz" ) == "Foo < bar > baz" );
     CHECK( SNIPPET.expand( "Foo <lt>lt<gt> baz" ) == "Foo <lt> baz" );
 }
+
+TEST_CASE( "text_snippet_translator_mangled_punc_tags", "[text_snippets]" )
+{
+    REQUIRE( SNIPPET.has_category( "<punc\xE2\x80\xA6!>" ) );
+    REQUIRE( SNIPPET.has_category( "<punc.\xE2\x80\xA6>" ) );
+
+    const auto expands_to_punctuation = []( const std::string & input,
+    const std::string & prefix ) {
+        const std::string out = SNIPPET.expand( input );
+        REQUIRE( out.find( '<' ) == std::string::npos );
+        REQUIRE( out.compare( 0, prefix.size(), prefix ) == 0 );
+        REQUIRE( out.size() > prefix.size() );
+        const std::string punct = out.substr( prefix.size() );
+        CHECK( ( punct == "." || punct == "!" || punct == "\xE2\x80\xA6" ) );
+    };
+
+    // Exact snippet categories from talk_tags.json.
+    expands_to_punctuation( "Can't believe it<punc\xE2\x80\xA6!>", "Can't believe it" );
+    expands_to_punctuation( "Later<punc.\xE2\x80\xA6>", "Later" );
+    // Spanish translations replace U+2026 with ASCII periods; those tags must
+    // still expand instead of surviving into parse_tags as a "Bad tag".
+    expands_to_punctuation( "No me lo creo<punc...!>", "No me lo creo" );
+    expands_to_punctuation( "Later<punc....>", "Later" );
+}

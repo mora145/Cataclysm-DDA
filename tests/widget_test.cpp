@@ -23,6 +23,7 @@
 #include "game.h"
 #include "game_constants.h"
 #include "item.h"
+#include "item_location.h"
 #include "magic.h"
 #include "map.h"
 #include "map_helpers.h"
@@ -70,6 +71,7 @@ static const flag_id json_flag_SPLINT( "SPLINT" );
 const static flag_id json_flag_W_DISABLED_WHEN_EMPTY( "W_DISABLED_WHEN_EMPTY" );
 
 static const itype_id itype_arm_splint( "arm_splint" );
+static const itype_id itype_flashlight_on( "flashlight_on" );
 static const itype_id itype_blindfold( "blindfold" );
 static const itype_id itype_ear_plugs( "ear_plugs" );
 static const itype_id itype_rad_badge( "rad_badge" );
@@ -98,6 +100,7 @@ static const weather_type_id weather_sunny( "sunny" );
 
 // test widgets defined in data/json/sidebar.json and data/mods/TEST_DATA/widgets.json
 static const widget_id widget_test_2_column_layout( "test_2_column_layout" );
+static const widget_id widget_active_light_desc( "active_light_desc" );
 static const widget_id widget_test_3_column_layout( "test_3_column_layout" );
 static const widget_id widget_test_4_column_layout( "test_4_column_layout" );
 static const widget_id widget_test_activity_clauses( "test_activity_clauses" );
@@ -284,6 +287,25 @@ TEST_CASE( "text_widgets", "[widget][text]" )
 
         CHECK( words.text( false, 0 ) == "Zero" );
     }
+}
+
+TEST_CASE( "active_light_sidebar_indicator_tracks_carried_light_sources",
+           "[widget][npc_ai][npc_ai_flashlight]" )
+{
+    avatar &ava = get_avatar();
+    clear_avatar();
+    widget active_light = widget_active_light_desc.obj();
+
+    CHECK( active_light.layout( ava ) == "Light source: <color_c_light_gray>-</color>" );
+
+    item flashlight( itype_flashlight_on, calendar::turn );
+    flashlight.active = true;
+    item_location carried_light = ava.i_add( flashlight );
+    REQUIRE( carried_light );
+    CHECK( active_light.layout( ava ) == "Light source: <color_c_light_gray>on</color>" );
+
+    carried_light.remove_item();
+    CHECK( active_light.layout( ava ) == "Light source: <color_c_light_gray>-</color>" );
 }
 
 TEST_CASE( "number_widgets_with_color", "[widget][number][color]" )

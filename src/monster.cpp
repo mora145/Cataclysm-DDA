@@ -63,6 +63,8 @@
 #include "mtype.h"
 #include "mutation.h"
 #include "npc.h"
+#include "npc_ai_combat_social.h"
+#include "npc_ai_event_stream.h"
 #include "options.h"
 #include "output.h"
 #include "overmapbuffer.h"
@@ -2154,6 +2156,21 @@ bool monster::melee_attack( Creature &target, float accuracy )
     }
 
     const int total_dealt = dealt_dam.total_damage();
+    if( hitspread >= 0 && total_dealt > 0 && !is_hallucination() &&
+        !target.is_hallucination() ) {
+        const Character *injured = target.as_character();
+        const npc_ai::world_event_claim_level claim =
+            injured != nullptr && injured->is_limb_broken( dealt_dam.bp_hit ) ?
+            npc_ai::world_event_claim_level::limb_disabled :
+            npc_ai::world_event_claim_level::hit_confirmed;
+        npc_ai::record_creature_world_event(
+            npc_ai::world_event_type::npc_attack, this, &target, 78,
+            "monster::melee_attack",
+            disp_name() + " golpeo a " + target.disp_name() + " en " +
+            body_part_name_accusative( dealt_dam.bp_hit ) + " y causo " +
+            std::to_string( total_dealt ) + " de dano.", true, 0, 0, 0, 0, 0,
+            body_part_name_accusative( dealt_dam.bp_hit ), total_dealt, "melee", claim );
+    }
     if( hitspread < 0 ) {
         bool monster_missed = monster_hit_roll < 0.0;
         // Miss
@@ -2979,6 +2996,7 @@ void monster::die( map *here, Creature *nkiller )
         // *only* set to true in this function!
         return;
     }
+    npc_ai::notify_visible_enemy_killed( *this, nkiller );
     // We were carrying a creature, deposit the rider
     if( has_effect( effect_ridden ) && mounted_player ) {
         mounted_player->forced_dismount();
@@ -3019,6 +3037,12 @@ void monster::die( map *here, Creature *nkiller )
             if( !grabbed ) {
                 you->add_msg_player_or_npc( m_good, _( "The last enemy holding you collapses!" ),
                                             _( "The last enemy holding <npcname> collapses!" ) );
+                if( nkiller != nullptr ) {
+                    npc_ai::record_creature_world_event( npc_ai::world_event_type::ally_saved,
+                            nkiller, you, 97, "monster::die(grab_release)",
+                            nkiller->disp_name() + " libero a " + you->disp_name() +
+                            " al abatir al ultimo enemigo que lo sujetaba (" + disp_name() + ")." );
+                }
                 // A loop for safety
                 for( const effect &grab : you->get_effects_with_flag( json_flag_GRAB ) ) {
                     you->remove_effect( grab.get_id() );

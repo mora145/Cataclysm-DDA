@@ -1,0 +1,31 @@
+[
+  {
+    "type": "sound_effect",
+    "id": "reload",
+    "variant": [
+      "sig_p230",
+      "walther_ppk",
+      "kp32",
+      "kp3at",
+      "fn1910",
+      "rugerlcp",
+      "hptcf380",
+      "taurus_spectrum",
+      "sig_mosquito",
+      "sw_22",
+      "j22",
+      "walther_p22",
+      "makarov",
+      "kpf9",
+      "cp33",
+      "ruger_mk4"
+    ],
+    "volume": 60,
+    "files": [
+      "reload/pocket_pistol/pocket_pistol_load_01.ogg",
+      "reload/pocket_pistol/pocket_pistol_load_02.ogg",
+      "reload/pocket_pistol/pocket_pistol_load_03.ogg",
+      "reload/pocket_pistol/pocket_pistol_load_04.ogg"
+    ]
+  }
+]

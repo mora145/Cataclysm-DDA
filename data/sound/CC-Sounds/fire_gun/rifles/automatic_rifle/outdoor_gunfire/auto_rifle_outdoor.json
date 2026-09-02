@@ -1,0 +1,42 @@
+[
+  {
+    "type": "sound_effect",
+    "id": "fire_gun",
+    "variant": [
+      "modular_ar15",
+      "lever_shotgun",
+      "ar_pistol",
+      "plr16",
+      "fs2000",
+      "modular_m27_assault_rifle",
+      "scar_l",
+      "hk_g36",
+      "m249",
+      "m249_semi",
+      "modular_m4_carbine",
+      "modular_m16a4",
+      "modular_m16_auto_rifle",
+      "m231pfw",
+      "oa93",
+      "ruger_mini",
+      "sig_assault_rifle",
+      "steyr_aug",
+      "ak556",
+      "minidraco556",
+      "mdrx",
+      "bren2_556",
+      "cz600",
+      "rdb_223",
+      "acr_300blk",
+      "iwi_tavor_x95_300blk",
+      "sig_mcx_rattler_sbr"
+    ],
+    "volume": 100,
+    "is_indoors": false,
+    "files": [
+      "fire_gun/rifles/automatic_rifle/outdoor_gunfire/556_auto_rifle_shot_01.ogg",
+      "fire_gun/rifles/automatic_rifle/outdoor_gunfire/556_auto_rifle_shot_02.ogg",
+      "fire_gun/rifles/automatic_rifle/outdoor_gunfire/556_auto_rifle_shot_03.ogg"
+    ]
+  }
+]

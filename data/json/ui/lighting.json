@@ -38,6 +38,14 @@
     ]
   },
   {
+    "id": "active_light_desc",
+    "type": "widget",
+    "label": "Light source",
+    "style": "text",
+    "var": "active_light_text",
+    "//": "Uses display::active_light_indicator"
+  },
+  {
     "id": "lighting_desc_no_label",
     "type": "widget",
     "copy-from": "lighting_desc",

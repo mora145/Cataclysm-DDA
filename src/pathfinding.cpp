@@ -544,9 +544,26 @@ std::vector<tripoint_bub_ms> map::route( const tripoint_bub_ms &f,
             pf.add_point( newg, newg + 2 * rl_dist( p, t ), cur, p );
         }
 
+        bool climbable_aid_nearby = static_cast<bool>( cur_special & PathfindingFlag::Climbable );
+        if( settings.allow_vertical_climbing && settings.climb_cost > 0 &&
+            cur.z() < max.z() && !climbable_aid_nearby ) {
+            for( const tripoint_bub_ms &p : points_in_radius( cur, 1 ) ) {
+                if( has_flag( ter_furn_flag::TFLAG_CLIMBABLE, p ) ) {
+                    climbable_aid_nearby = true;
+                    break;
+                }
+            }
+        }
+        const bool can_climb_up = settings.allow_vertical_climbing &&
+                                  settings.climb_cost > 0 && climbable_aid_nearby;
+        const bool can_climb_down = settings.allow_vertical_climbing &&
+                                    settings.climb_cost > 0 &&
+                                    ( cur_special & PathfindingFlag::Climbable );
+        const bool can_vertical_climb = can_climb_up || can_climb_down;
+
         // TODO: We should be able to go up ramps even if we can't climb stairs.
-        if( !( cur_special & ( PathfindingFlag::GoesUp | PathfindingFlag::GoesDown ) ) ||
-            !settings.allow_climb_stairs ) {
+        if( ( !( cur_special & ( PathfindingFlag::GoesUp | PathfindingFlag::GoesDown ) ) ||
+              !settings.allow_climb_stairs ) && !can_vertical_climb ) {
             // The part below is only for z-level pathing
             continue;
         }
@@ -627,6 +644,67 @@ std::vector<tripoint_bub_ms> map::route( const tripoint_bub_ms &f,
                 pf.add_point( layer.gscore[parent_index] + 4,
                               layer.score[parent_index] + 4 + 2 * rl_dist( below, t ),
                               cur, below );
+            }
+        }
+
+        if( can_climb_up && !parent_terrain.has_flag( ter_furn_flag::TFLAG_GOES_UP ) &&
+            cur.z() < max.z() ) {
+            const tripoint_bub_ms directly_above = cur + tripoint::above;
+            if( inbounds( directly_above ) && !has_floor_or_support( directly_above ) &&
+                valid_move( cur, directly_above, false, true ) && climb_difficulty( cur ) <= 5 ) {
+                path_data_layer &upper_layer = pf.get_layer( cur.z() + 1 );
+                for( const tripoint_bub_ms &dest : points_in_radius( directly_above, 1 ) ) {
+                    if( dest.z() != directly_above.z() || !inbounds( dest ) ||
+                        !passable_through( dest ) || !has_floor_or_water( dest ) ||
+                        ( !target.contains( dest ) && avoid( dest ) ) ) {
+                        continue;
+                    }
+                    const PathfindingFlags dest_special =
+                        get_pathfinding_cache_ref( dest.z() ).special[dest.x()][dest.y()];
+                    const int risk_cost = cost_to_avoid( cur, dest, settings, dest_special );
+                    if( risk_cost < 0 ) {
+                        continue;
+                    }
+                    const int climb_cost = settings.climb_cost + 5 + risk_cost;
+                    pf.add_point( layer.gscore[parent_index] + climb_cost,
+                                  layer.score[parent_index] + climb_cost +
+                                  2 * rl_dist( dest, t ), cur, dest );
+                }
+            }
+        }
+
+        if( can_climb_down && !parent_terrain.has_flag( ter_furn_flag::TFLAG_GOES_DOWN ) &&
+            cur.z() > min.z() ) {
+            const tripoint_bub_ms directly_below = cur + tripoint::below;
+            for( const tripoint_bub_ms &dest : points_in_radius( directly_below, 1 ) ) {
+                if( dest.z() != directly_below.z() || !inbounds( dest ) ||
+                    !passable_through( dest ) || !has_floor_or_water( dest ) ||
+                    !has_flag( ter_furn_flag::TFLAG_CLIMBABLE, dest ) ||
+                    ( !target.contains( dest ) && avoid( dest ) ) ) {
+                    continue;
+                }
+
+                // Vanilla gutter descent starts on t_gutter_drop, crosses the adjacent
+                // open-air ledge tile, then descends onto t_gutter_downspout below it.
+                // Aligned climbing aids remain valid for ladders and similar terrain.
+                const tripoint_bub_ms upper_edge( dest.xy(), cur.z() );
+                if( dest.xy() != cur.xy() &&
+                    ( !is_open_air( upper_edge ) ||
+                      !valid_move( cur, upper_edge, false, true ) ||
+                      !valid_move( upper_edge, dest, false, true ) ) ) {
+                    continue;
+                }
+
+                const PathfindingFlags dest_special =
+                    get_pathfinding_cache_ref( dest.z() ).special[dest.x()][dest.y()];
+                const int risk_cost = cost_to_avoid( cur, dest, settings, dest_special );
+                if( risk_cost >= 0 ) {
+                    path_data_layer &lower_layer = pf.get_layer( dest.z() );
+                    const int climb_cost = settings.climb_cost + 5 + risk_cost;
+                    pf.add_point( layer.gscore[parent_index] + climb_cost,
+                                  layer.score[parent_index] + climb_cost +
+                                  2 * rl_dist( dest, t ), cur, dest );
+                }
             }
         }
 

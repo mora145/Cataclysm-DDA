@@ -21,6 +21,7 @@
 #include "faction.h"
 #include "game.h"
 #include "game_constants.h"
+#include "item.h"
 #include "make_static.h"
 #include "map.h"
 #include "mood_face.h"
@@ -149,6 +150,13 @@ std::string display::get_temp( const Character &u )
         return "-";
     }
     return temp;
+}
+
+std::string display::active_light_indicator( const Character &u )
+{
+    // LIGHT_n JSON flags are finalized into itype::light_emission and then removed,
+    // so cache the stable emissive predicate rather than testing a discarded flag.
+    return u.cache_has_item_with( "item::is_emissive", &item::is_emissive ) ? _( "on" ) : "-";
 }
 
 std::string display::time_approx( const time_point &turn )

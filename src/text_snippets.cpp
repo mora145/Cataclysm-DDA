@@ -235,6 +235,28 @@ bool snippet_library::has_snippet_with_id( const snippet_id &id ) const
     return snippets_by_id.find( id ) != snippets_by_id.end();
 }
 
+// Translators often replace U+2026 ELLIPSIS with three ASCII periods inside
+// punctuation snippet tags, e.g. "<punc…!>" becoming "<punc...!>".  Those
+// mangled tags have no snippet category and would otherwise survive expand()
+// and trigger parse_tags()'s "Bad tag" debugmsg.
+static std::string canonical_punctuation_snippet_tag( const std::string &tag )
+{
+    static const std::string ascii_ellipsis = "...";
+    // UTF-8 encoding of U+2026 HORIZONTAL ELLIPSIS.
+    static const std::string unicode_ellipsis = "\xE2\x80\xA6";
+    if( tag.size() < 8 || tag.front() != '<' || tag.back() != '>' ||
+        tag.compare( 0, 5, "<punc" ) != 0 ) {
+        return tag;
+    }
+    const size_t pos = tag.rfind( ascii_ellipsis );
+    if( pos == std::string::npos ) {
+        return tag;
+    }
+    std::string canonical = tag;
+    canonical.replace( pos, ascii_ellipsis.size(), unicode_ellipsis );
+    return canonical;
+}
+
 std::string snippet_library::expand( const std::string &str ) const
 {
     size_t tag_begin = str.find( '<' );
@@ -248,6 +270,12 @@ std::string snippet_library::expand( const std::string &str ) const
 
     std::string symbol = str.substr( tag_begin, tag_end - tag_begin + 1 );
     std::optional<translation> replacement = random_from_category( symbol );
+    if( !replacement.has_value() ) {
+        const std::string canonical = canonical_punctuation_snippet_tag( symbol );
+        if( canonical != symbol ) {
+            replacement = random_from_category( canonical );
+        }
+    }
     if( !replacement.has_value() ) {
         return str.substr( 0, tag_end + 1 )
                + expand( str.substr( tag_end + 1 ) );

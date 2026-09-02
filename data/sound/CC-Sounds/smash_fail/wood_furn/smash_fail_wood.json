@@ -1,0 +1,46 @@
+[
+  {
+    "type": "sound_effect",
+    "id": "smash_fail",
+    "variant": [
+      "f_bench",
+      "f_bench_wooden",
+      "f_bench_park",
+      "f_barstool",
+      "f_chair_plywood",
+      "f_chair_black",
+      "f_chair_white",
+      "f_stool",
+      "f_chair",
+      "f_bookcase",
+      "f_entertainment_center",
+      "f_coffin_c",
+      "f_coffin_o",
+      "f_crate_c",
+      "f_crate_o",
+      "f_dresser",
+      "f_rack_wood",
+      "f_rack_coat",
+      "f_wardrobe",
+      "f_wood_keg",
+      "f_chest",
+      "f_pallet_belted",
+      "f_pallet_belted_open",
+      "f_counter",
+      "f_cupboard",
+      "f_counter_gate_c",
+      "f_counter_gate_o",
+      "f_desk",
+      "f_table",
+      "f_coffee_table"
+    ],
+    "volume": 60,
+    "files": [
+      "smash_fail/wood_furn/smash_fail_wood.ogg",
+      "smash_fail/wood_furn/smash_fail_wood_1.ogg",
+      "smash_fail/wood_furn/smash_fail_wood_2.ogg",
+      "smash_fail/wood_furn/smash_fail_wood_3.ogg",
+      "smash_fail/wood_furn/smash_fail_wood_4.ogg"
+    ]
+  }
+]

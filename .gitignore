@@ -53,6 +53,14 @@ json_formatter
 .cache/
 zzip
 
+# Local CDDA AI runtime, diagnostics, and personal save backups
+/npc_ai_ollama_diagnostics.txt
+/npc_ai_*_runtime.txt
+/cdda_message_log.txt
+/cdda_leftover_liquid.txt
+/logs_prueba*/
+/save-backup-*/
+
 # Visual Studio files
 *.code-workspace
 *.exp

@@ -72,6 +72,7 @@
 #include "move_mode.h"
 #include "mtype.h"
 #include "mutation.h"
+#include "npc_ai_async.h"
 #include "options.h"
 #include "output.h"
 #include "overmap_ui.h"
@@ -2562,6 +2563,14 @@ bool game::do_regular_action( action_id &act, avatar &player_character,
             chat();
             break;
 
+        case ACTION_AI_TALK:
+            ai_talk();
+            break;
+
+        case ACTION_NPC_MOVE:
+            npc_move_command();
+            break;
+
         case ACTION_PEEK:
             peek();
             break;
@@ -3088,6 +3097,7 @@ bool game::do_regular_action( action_id &act, avatar &player_character,
 
 bool game::handle_action()
 {
+    npc_ai::process_ai_completions();
     map &here = get_map();
 
     std::string action;

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <functional>
+#include <fstream>
 #include <iterator>
 #include <list>
 #include <map>
@@ -75,11 +76,26 @@
 #include "monster.h"
 #include "mtype.h"
 #include "npc.h"
+#include "npc_ai_watchlist.h"
+#include "npc_ai_batch_pickup.h"
+#include "npc_ai_climbing.h"
+#include "npc_ai_debug.h"
+#include "npc_ai_spontaneous.h"
+#include "npc_ai_combat_social.h"
+#include "npc_ai_context.h"
+#include "npc_ai_equipment_memory.h"
+#include "npc_ai_fire.h"
+#include "npc_ai_profiler.h"
+#include "npc_ai_rescue.h"
+#include "npc_ai_survival.h"
+#include "npc_ai_vehicle_unload.h"
+#include "npc_ai_wield.h"
 #include "npc_attack.h"
 #include "npc_opinion.h"
 #include "npctalk.h"
 #include "omdata.h"
 #include "options.h"
+#include "output.h"
 #include "overmap_location.h"
 #include "overmapbuffer.h"
 #include "pathfinding.h"
@@ -835,6 +851,11 @@ void npc::assess_danger()
             ai_cache.friends.emplace_back( g->shared_from( guy ) );
         } else if( attitude_to( guy ) != Attitude::NEUTRAL && sees( here, guy.pos_bub( here ) ) ) {
             ai_cache.hostile_guys.emplace_back( g->shared_from( guy ) );
+        } else if( sees( here, guy.pos_bub( here ) ) ) {
+            // Keep visible neutral characters in the same vanilla perception
+            // cache as neutral monsters.  Consumers can now reuse the cache
+            // without rescanning every active creature independently.
+            ai_cache.neutral_guys.emplace_back( g->shared_from( guy ) );
         }
     }
     if( is_friendly( player_character ) && sees_player ) {
@@ -1304,7 +1325,8 @@ void npc::regen_ai_cache()
     }
 
     assess_danger();
-    if( old_assessment > NPC_DANGER_VERY_LOW && ai_cache.danger_assessment <= 0 ) {
+    if( old_assessment > NPC_DANGER_VERY_LOW && ai_cache.danger_assessment <= 0 &&
+        npc_ai::combat_social_situation_is_clear( *this ) ) {
         warn_about( "relax", 30_minutes );
     } else if( old_assessment <= 0.0f && ai_cache.danger_assessment > NPC_DANGER_VERY_LOW ) {
         warn_about( "general_danger" );
@@ -1333,6 +1355,7 @@ void npc::regen_ai_cache()
 
 void npc::move()
 {
+    npc_ai::maybe_write_profile_report( to_turn<int>( calendar::turn ) );
     const map &here = get_map();
 
     // don't just return from this function without doing something
@@ -1344,12 +1367,54 @@ void npc::move()
         set_attitude( NPCATT_NULL );
     }
     regen_ai_cache();
+
+    // A casualty is physically linked only in attached/dragging.  Consume its
+    // turn before any custom or vanilla selector can follow, guard, crawl,
+    // pick up an item, or start an activity of its own.
+    if( npc_ai::consume_linked_casualty_turn( *this ) ) {
+        return;
+    }
+    bool has_rescue_claim = npc_ai::rescue_for_rescuer( *this ).has_value();
+    if( has_rescue_claim && ( in_vehicle || is_mounted() ) ) {
+        npc_ai::cancel_rescue_for( *this, "rescuer entered a vehicle or mount" );
+        has_rescue_claim = false;
+    }
+
+    {
+        npc_ai::scoped_profile npc_ai_total_profile( npc_ai::profile_subsystem::total );
+        if( !has_rescue_claim ) {
+            // CDDA-AI: revisa encargos de objetos visibles.
+            // Esta funcion NO llama a Ollama ni al LLM.
+            npc_ai::check_item_watchlist( *this );
+            // Continua la cola de recogida sin llamar a Qwen.
+            npc_ai::process_batch_pickup( *this );
+        }
+        // Cheap event gates run before any prompt or expensive perception.
+        npc_ai::process_combat_social( *this );
+        npc_ai::process_spontaneous_speech( *this );
+    }
     // NPCs under operation should just stay still
     if( activity.id() == ACT_OPERATION || activity.id() == ACT_SPELLCASTING ) {
+        npc_ai::cancel_rescue_for( *this, "rescuer has an incompatible activity" );
         execute_action( npc_player_activity );
         return;
     }
     act_on_danger_assessment();
+    {
+        npc_ai::scoped_profile npc_ai_total_profile( npc_ai::profile_subsystem::total );
+        if( !has_rescue_claim && npc_ai::process_equipment_recovery( *this ) ) {
+            return;
+        }
+        npc_ai::consider_basic_survival( *this );
+        // Continue explicit fire-lighting goals through normal movement and activity mechanics.
+        if( !has_rescue_claim && npc_ai::process_start_fire_task( *this ) ) {
+            return;
+        }
+        // Vehicle unloading remains a deterministic goal; ACT_MOVE_LOOT performs the hauling.
+        if( !has_rescue_claim && npc_ai::process_vehicle_unload_task( *this ) ) {
+            return;
+        }
+    }
     npc_action action = npc_undecided;
 
     const item_location weapon = get_wielded_item();
@@ -1385,6 +1450,7 @@ void npc::move()
      */
     if( !in_vehicle && ( sees_dangerous_field( pos_bub() ) || has_effect( effect_npc_fire_bad ) ) &&
         !has_flag( json_flag_CANNOT_MOVE ) ) {
+        npc_ai::cancel_rescue_for( *this, "rescuer fled fire or a dangerous field" );
         if( sees_dangerous_field( pos_bub() ) ) {
             path.clear();
         }
@@ -1402,6 +1468,7 @@ void npc::move()
      */
 
     if( !ai_cache.dangerous_explosives.empty() && !has_flag( json_flag_CANNOT_MOVE ) ) {
+        npc_ai::cancel_rescue_for( *this, "rescuer evaded an explosion" );
         action = npc_escape_explosion;
     } else if( is_enemy() && vehicle_danger( avoidance_vehicles_radius ) >= 0 &&
                !has_flag( json_flag_CANNOT_MOVE ) ) {
@@ -1459,6 +1526,11 @@ void npc::move()
         }
     } else {
         // No present danger
+        const npc_ai::rescue_tick_result rescue_result = npc_ai::tick_rescue( *this );
+        if( rescue_result == npc_ai::rescue_tick_result::consumed_turn ||
+            rescue_result == npc_ai::rescue_tick_result::completed ) {
+            return;
+        }
         cleanup_on_no_danger();
 
         action = address_needs();
@@ -1474,6 +1546,19 @@ void npc::move()
             add_msg_debug( debugmode::DF_NPC, "NPC %s: returning to guard spot at x(%d) y(%d)", get_name(),
                            return_guard_pos.x(), return_guard_pos.y() );
             action = npc_return_to_guard_pos;
+        }
+    }
+
+    // Any vanilla action selected before the no-danger overlay owns this turn.
+    // Do not leave positioning or a physical link active while that action
+    // executes; an approaching rescuer may resume after the interruption.
+    if( action != npc_undecided || ( target != nullptr && ai_cache.danger > 0 ) ) {
+        const std::optional<npc_ai::rescue_state> rescue =
+            npc_ai::rescue_for_rescuer( *this );
+        if( rescue && ( rescue->phase == npc_ai::rescue_phase::positioning ||
+                        rescue->phase == npc_ai::rescue_phase::attached ||
+                        rescue->phase == npc_ai::rescue_phase::dragging ) ) {
+            npc_ai::cancel_rescue_for( *this, "immediate danger interrupted the rescue" );
         }
     }
 
@@ -3081,15 +3166,22 @@ void npc::move_to( const tripoint_bub_ms &pt, bool no_bashing, std::set<tripoint
 
     Character &player_character = get_player_character();
     if( p.z() != pos.z() ) {
-        // Z-level move
-        // For now just teleport to the destination
-        // TODO: Make it properly find the tile to move to
         if( is_mounted() ) {
             move_pause();
             return;
         }
-        mod_moves( -get_speed() );
-        moved = true;
+        const npc_ai::climb_attempt_result climb_result = npc_ai::attempt_climb( *this, pos, p );
+        if( climb_result == npc_ai::climb_attempt_result::succeeded ) {
+            moved = true;
+        } else if( climb_result == npc_ai::climb_attempt_result::not_a_climb ) {
+            // Existing stairs and ramps already provide validated path edges.
+            mod_moves( -get_speed() );
+            moved = true;
+        } else {
+            path.clear();
+            move_pause();
+            return;
+        }
     } else if( has_effect( effect_stumbled_into_invisible ) &&
                here.has_field_at( p, field_fd_last_known ) && !sees( here, player_character ) &&
                attitude_to( player_character ) == Attitude::HOSTILE ) {
@@ -3708,13 +3800,570 @@ void npc::find_item()
     }
 }
 
+// CDDA-AI PICKUP V1 REQUEST BEGIN
+bool npc::ai_request_pickup(
+    const item_location &target,
+    const tripoint_bub_ms &where,
+    std::string &error,
+    const bool allow_wield_swap,
+    const std::string &request_text,
+    const npc_ai::acquisition_intent intent,
+    const std::string &intent_source
+)
+{
+    map &here = get_map();
+
+    npc_ai::debug_stream debug( "npc_ai_pickup_v1_runtime.txt" );
+
+    if( !target ) {
+        error = "el objeto ya no existe";
+
+        if( debug ) {
+            debug << "ENGINE_REJECT=TARGET_INVALID\n";
+        }
+
+        return false;
+    }
+
+    if( debug ) {
+        debug << "REQUEST_TEXT=" << request_text << "\n"
+              << "NPC=" << get_name() << "\n"
+              << "REQUESTED_TARGET_ID=" << target->typeId().str() << "\n"
+              << "REQUESTED_TARGET_NAME=" << remove_color_tags( target->tname() ) << "\n"
+              << "ACQUISITION_INTENT=" << npc_ai::acquisition_intent_name( intent ) << "\n"
+              << "INTENT_SOURCE=" << intent_source << "\n";
+    }
+
+    if(
+        target.where_recursive() !=
+        item_location::type::map
+    ) {
+        error = "PICKUP V1 solo admite objetos sueltos del mapa";
+
+        if( debug ) {
+            debug << "ENGINE_REJECT=NOT_MAP_ITEM\n";
+        }
+
+        return false;
+    }
+
+    if(
+        target.pos_bub( here ) !=
+        where
+    ) {
+        error = "la posicion real del objeto cambio";
+
+        if( debug ) {
+            debug << "ENGINE_REJECT=POSITION_CHANGED\n";
+        }
+
+        return false;
+    }
+
+    if( !sees( here, where ) ) {
+        error = "ya no puedo verlo";
+
+        if( debug ) {
+            debug << "ENGINE_REJECT=NOT_VISIBLE\n";
+        }
+
+        return false;
+    }
+
+    if(
+        is_player_ally() &&
+        g->check_zone(
+            zone_type_NO_NPC_PICKUP,
+            where
+        )
+    ) {
+        error = "esta dentro de una zona donde no debo recoger objetos";
+
+        if( debug ) {
+            debug << "ENGINE_REJECT=NO_PICKUP_ZONE\n";
+        }
+
+        return false;
+    }
+
+    const bool can_store_target = can_take_that( *target );
+    const npc_ai::wield_target_result wield_validation =
+        npc_ai::validate_wield_target( *this, target, allow_wield_swap );
+    if( debug ) {
+        debug << "RESOLVED_TARGET_ID=" << target->typeId().str() << "\n"
+              << "RESOLVED_TARGET_NAME=" << remove_color_tags( target->tname() ) << "\n"
+              << "TARGET_POS=" << where.to_string_writable() << "\n"
+              << "CAN_STORE=" << ( can_store_target ? "yes" : "no" ) << "\n"
+              << "CAN_WIELD=" << ( wield_validation.success ? "yes" : "no" ) << "\n"
+              << "VALIDATED_TARGET_ID=" << target->typeId().str() << "\n"
+              << "WIELD_REASON=" << wield_validation.message << "\n"
+              << "OBTAIN_CALLED=no\n";
+    }
+    if( !can_store_target && !wield_validation.success ) {
+        error = string_format( "no puedo guardarlo ni empuñarlo: %s", wield_validation.message );
+
+        if( debug ) {
+            debug << "ENGINE_REJECT=NO_STORAGE_OR_WIELD"
+                  << " | WIELD_REASON=" << wield_validation.message << "\n"
+                  << "ENGINE_PICKUP_MODE="
+                  << ( intent == npc_ai::acquisition_intent::wield ? "WIELD" : "STASH" )
+                  << "\nFINAL_DESTINATION=GROUND\n";
+        }
+
+        return false;
+    }
+
+    if( !would_take_that( *target, where ) ) {
+        error = "las reglas del mundo no me permiten tomarlo";
+
+        if( debug ) {
+            debug << "ENGINE_REJECT=WORLD_RULES\n";
+        }
+
+        return false;
+    }
+
+    wanted_item = target;
+    wanted_item_pos = where;
+
+    fetching_item = true;
+    ai_directed_pickup = true;
+    ai_directed_pickup_allow_wield_swap = allow_wield_swap;
+    ai_directed_pickup_intent = intent;
+    ai_directed_pickup_intent_source = intent_source;
+    ai_directed_pickup_request_text = request_text;
+    ai_directed_pickup_target_id = target->typeId().str();
+    ai_directed_pickup_target_name = remove_color_tags( target->tname() );
+
+    path.clear();
+
+    const int distance =
+        rl_dist(
+            pos_bub(),
+            wanted_item_pos
+        );
+
+    if( distance > 1 ) {
+
+        const std::optional<tripoint_bub_ms> destination =
+            nearest_passable(
+                wanted_item_pos,
+                pos_bub()
+            );
+
+        if( !destination ) {
+
+            fetching_item = false;
+            ai_directed_pickup = false;
+            ai_directed_pickup_allow_wield_swap = true;
+            ai_directed_pickup_intent = npc_ai::acquisition_intent::automatic;
+            ai_directed_pickup_intent_source.clear();
+            ai_directed_pickup_request_text.clear();
+            ai_directed_pickup_target_id.clear();
+            ai_directed_pickup_target_name.clear();
+            wanted_item = {};
+
+            error = "no encuentro una posicion accesible junto al objeto";
+
+            if( debug ) {
+                debug << "ENGINE_REJECT=NO_ADJACENT_POSITION\n";
+            }
+
+            return false;
+        }
+
+        update_path( *destination );
+
+        if( path.empty() ) {
+
+            fetching_item = false;
+            ai_directed_pickup = false;
+            ai_directed_pickup_allow_wield_swap = true;
+            ai_directed_pickup_intent = npc_ai::acquisition_intent::automatic;
+            ai_directed_pickup_intent_source.clear();
+            ai_directed_pickup_request_text.clear();
+            ai_directed_pickup_target_id.clear();
+            ai_directed_pickup_target_name.clear();
+            wanted_item = {};
+
+            error = "no encuentro una ruta hasta el objeto";
+
+            if( debug ) {
+                debug << "ENGINE_REJECT=NO_PATH\n";
+            }
+
+            return false;
+        }
+    }
+
+    if( debug ) {
+        const char *pickup_mode = intent == npc_ai::acquisition_intent::wield ?
+                                  ( wield_validation.success ? "WIELD" : "STASH_FALLBACK" ) :
+                                  can_store_target ? "STASH" : "WIELD_FALLBACK";
+        debug
+            << "ENGINE_REQUEST_ACCEPTED\n"
+            << "ENGINE_PICKUP_MODE="
+            << pickup_mode
+            << "\n"
+            << "ENGINE_DISTANCE="
+            << distance
+            << "\n";
+    }
+
+    error.clear();
+
+    return true;
+}
+// CDDA-AI PICKUP V1 REQUEST END
+
 void npc::pick_up_item()
 {
     if( is_hallucination() ) {
         return;
     }
 
-    if( !rules.has_flag( ally_rule::allow_pick_up ) && is_player_ally() ) {
+
+    // CDDA-AI DIRECTED PICKUP V1 BEGIN
+    if( ai_directed_pickup ) {
+
+        map &here = get_map();
+
+        npc_ai::debug_stream debug( "npc_ai_pickup_v1_runtime.txt" );
+
+        const auto clear_directed_pickup =
+            [this]() {
+                ai_directed_pickup = false;
+                ai_directed_pickup_allow_wield_swap = true;
+                ai_directed_pickup_intent = npc_ai::acquisition_intent::automatic;
+                ai_directed_pickup_intent_source.clear();
+                ai_directed_pickup_request_text.clear();
+                ai_directed_pickup_target_id.clear();
+                ai_directed_pickup_target_name.clear();
+                fetching_item = false;
+                wanted_item = {};
+                path.clear();
+            };
+
+        if( debug ) {
+            debug
+                << "ENGINE_TICK pos="
+                << pos_bub().to_string_writable()
+                << "\n";
+        }
+
+        if( !wanted_item ) {
+
+            if( debug ) {
+                debug << "ENGINE_ABORT=TARGET_DISAPPEARED\n";
+            }
+
+            say(
+                "El objeto que iba a recoger ya no esta ahi."
+            );
+
+            clear_directed_pickup();
+            move_pause();
+
+            return;
+        }
+
+        wanted_item_pos =
+            wanted_item.pos_bub( here );
+
+        if(
+            is_player_ally() &&
+            g->check_zone(
+                zone_type_NO_NPC_PICKUP,
+                wanted_item_pos
+            )
+        ) {
+
+            if( debug ) {
+                debug << "ENGINE_ABORT=NO_PICKUP_ZONE\n";
+            }
+
+            say(
+                "Ese objeto esta en una zona donde no debo recoger cosas."
+            );
+
+            clear_directed_pickup();
+            move_pause();
+
+            return;
+        }
+
+        if( !would_take_that( *wanted_item, wanted_item_pos ) ) {
+            if( debug ) {
+                debug << "ENGINE_ABORT=WORLD_RULES\n";
+            }
+            say( npc_ai::localized_ai_message(
+                     _( "The world's ownership rules no longer allow me to take that item." ),
+                     "Las reglas de propiedad ya no me permiten recoger ese objeto." ) );
+            clear_directed_pickup();
+            move_pause();
+            return;
+        }
+
+        const bool can_store_target = can_take_that( *wanted_item );
+        const npc_ai::wield_target_result wield_validation =
+            npc_ai::validate_wield_target(
+                *this, wanted_item, ai_directed_pickup_allow_wield_swap );
+        const npc_ai::acquisition_intent intent = ai_directed_pickup_intent;
+        const bool should_wield = wield_validation.success &&
+                                  ( intent == npc_ai::acquisition_intent::wield ||
+                                    !can_store_target );
+        const char *pickup_mode = !can_store_target && !wield_validation.success ?
+                                  ( intent == npc_ai::acquisition_intent::wield ? "WIELD" : "STASH" ) :
+                                  should_wield ?
+                                  ( intent == npc_ai::acquisition_intent::wield ?
+                                    "WIELD" : "WIELD_FALLBACK" ) :
+                                  ( intent == npc_ai::acquisition_intent::wield ?
+                                    "STASH_FALLBACK" : "STASH" );
+        if( debug ) {
+            debug << "REQUEST_TEXT=" << ai_directed_pickup_request_text << "\n"
+                  << "NPC=" << get_name() << "\n"
+                  << "REQUESTED_TARGET_ID=" << ai_directed_pickup_target_id << "\n"
+                  << "REQUESTED_TARGET_NAME=" << ai_directed_pickup_target_name << "\n"
+                  << "RESOLVED_TARGET_ID=" << wanted_item->typeId().str() << "\n"
+                  << "RESOLVED_TARGET_NAME=" << remove_color_tags( wanted_item->tname() ) << "\n"
+                  << "TARGET_POS=" << wanted_item_pos.to_string_writable() << "\n"
+                  << "CAN_STORE=" << ( can_store_target ? "yes" : "no" ) << "\n"
+                  << "CAN_WIELD=" << ( wield_validation.success ? "yes" : "no" ) << "\n"
+                  << "ACQUISITION_INTENT=" << npc_ai::acquisition_intent_name( intent ) << "\n"
+                  << "INTENT_SOURCE=" << ai_directed_pickup_intent_source << "\n"
+                  << "ENGINE_PICKUP_MODE=" << pickup_mode << "\n"
+                  << "VALIDATED_TARGET_ID=" << wanted_item->typeId().str() << "\n"
+                  << "WIELD_REASON=" << wield_validation.message << "\n";
+        }
+        if( !can_store_target && !wield_validation.success ) {
+            const std::string failed_name = remove_color_tags( wanted_item->tname() );
+            if( debug ) {
+                debug << "ENGINE_ABORT=NO_STORAGE_OR_WIELD"
+                      << " | WIELD_REASON=" << wield_validation.message << "\n"
+                      << "OBTAIN_CALLED=no\n"
+                      << "POST_OBTAIN_LOCATION=not_called\n"
+                      << "FINAL_DESTINATION=GROUND\n"
+                      << "ROLLBACK=no\n";
+            }
+            say( string_format( npc_ai::localized_ai_message(
+                                    _( "I can't pick up %1$s: I can't store it, and %2$s" ),
+                                    "No puedo recoger %1$s: no puedo guardarlo y %2$s" ),
+                                failed_name, wield_validation.message ) );
+            clear_directed_pickup();
+            move_pause();
+            return;
+        }
+
+        const int distance =
+            rl_dist(
+                pos_bub(),
+                wanted_item_pos
+            );
+
+        if( debug ) {
+            debug
+                << "ENGINE_TARGET="
+                << remove_color_tags( wanted_item->tname() )
+                << " | target_pos="
+                << wanted_item_pos.to_string_writable()
+                << " | distance="
+                << distance
+                << "\n";
+        }
+
+        if( distance > 1 ) {
+
+            const std::optional<tripoint_bub_ms> destination =
+                nearest_passable(
+                    wanted_item_pos,
+                    pos_bub()
+                );
+
+            if( !destination ) {
+
+                if( debug ) {
+                    debug << "ENGINE_ABORT=NO_ADJACENT_POSITION\n";
+                }
+
+                say(
+                    "No encuentro como acercarme a ese objeto."
+                );
+
+                clear_directed_pickup();
+                move_pause();
+
+                return;
+            }
+
+            update_path( *destination );
+
+            if( path.empty() ) {
+
+                if( debug ) {
+                    debug << "ENGINE_ABORT=NO_PATH\n";
+                }
+
+                say(
+                    "No encuentro una ruta hasta ese objeto."
+                );
+
+                clear_directed_pickup();
+                move_pause();
+
+                return;
+            }
+
+            if( debug ) {
+                debug
+                    << "ENGINE_MOVE_NEXT="
+                    << path[0].to_string_writable()
+                    << "\n";
+            }
+
+            move_to_next();
+
+            return;
+        }
+
+        const std::string pickup_name =
+            remove_color_tags( wanted_item->tname() );
+
+        std::string wield_failure_reason = wield_validation.message;
+        if( should_wield ) {
+            if( debug ) {
+                debug << "OBTAIN_CALLED=no\n"
+                      << "OBTAINED_TARGET_ID=not_called\n";
+            }
+            npc_ai::wield_target_result wielded = npc_ai::wield_target(
+                    *this, wanted_item, ai_directed_pickup_allow_wield_swap );
+            if( !wielded.success ) {
+                wield_failure_reason = wielded.message;
+                if( debug ) {
+                    debug << "ENGINE_WIELD_FAILED"
+                          << " | WIELD_REASON=" << wielded.message << "\n"
+                          << "STORAGE_FALLBACK=" << ( can_store_target ? "yes" : "no" ) << "\n";
+                }
+                if( !can_store_target ) {
+                    if( debug ) {
+                        debug << "POST_OBTAIN_LOCATION=not_called\n"
+                              << "FINAL_DESTINATION=GROUND\n"
+                              << "ROLLBACK=no\n";
+                    }
+                    say( string_format( npc_ai::localized_ai_message(
+                                            _( "I can't pick up %1$s: %2$s" ),
+                                            "No puedo recoger %1$s: %2$s" ),
+                                        pickup_name, wielded.message ) );
+                    clear_directed_pickup();
+                    move_pause();
+                    return;
+                }
+            } else {
+                // A directed acquisition owns its final equipment choice.
+                // Do not let the next vanilla scan replace the requested target.
+                has_new_items = false;
+                clear_directed_pickup();
+                if( debug ) {
+                    debug << "ENGINE_WIELD_SUCCESS=" << pickup_name << "\n"
+                          << "FINAL_DESTINATION=WIELDED\n"
+                          << "ROLLBACK=no\n";
+                }
+                say( intent == npc_ai::acquisition_intent::store ?
+                     string_format( npc_ai::localized_ai_message(
+                                        _( "I couldn't store %s, so I wielded it." ),
+                                        "No pude guardar %s, así que lo empuñé." ), pickup_name ) :
+                     wielded.message );
+                return;
+            }
+        }
+
+        // item_location::obtain() delegates to Character::i_add(), whose default
+        // fallbacks may wield or drop the copy before deleting the map source.
+        // Directed pickup needs a stronger transaction: add only to storage,
+        // validate that exact copy, and remove the source last.
+        static const std::string transfer_var = "npc_ai_directed_transfer_uid";
+        const std::string previous_transfer_identity = wanted_item->get_var( transfer_var );
+        const std::string transfer_identity = "directed-" + random_string( 16 );
+        wanted_item->set_var( transfer_var, transfer_identity );
+        const std::string expected_id = wanted_item->typeId().str();
+        const std::string expected_async_uid =
+            wanted_item->get_var( "npc_ai_async_target_uid" );
+        const int obtain_moves = wanted_item.obtain_cost( *this );
+
+        if( debug ) {
+            if( intent == npc_ai::acquisition_intent::wield ) {
+                debug << "ENGINE_PICKUP_MODE=STASH_FALLBACK\n";
+            }
+            debug << "ENGINE_ATOMIC_STORAGE_START\n"
+                  << "OBTAIN_CALLED=no\n"
+                  << "OBTAIN_RESULT=not_called\n";
+        }
+
+        wanted_item.on_contents_changed();
+        item_location stored = try_add( *wanted_item, nullptr, wanted_item.get_item(), false );
+        const bool exact_storage_destination = stored && stored.held_by( *this ) &&
+                                               stored->typeId().str() == expected_id &&
+                                               stored->get_var( transfer_var ) == transfer_identity &&
+                                               ( expected_async_uid.empty() ||
+                                                 stored->get_var( "npc_ai_async_target_uid" ) ==
+                                                 expected_async_uid );
+
+        if( !exact_storage_destination ) {
+            bool rolled_back = false;
+            if( stored && stored.held_by( *this ) &&
+                stored->get_var( transfer_var ) == transfer_identity ) {
+                stored.remove_item();
+                rolled_back = true;
+            }
+            if( wanted_item ) {
+                if( previous_transfer_identity.empty() ) {
+                    wanted_item->erase_var( transfer_var );
+                } else {
+                    wanted_item->set_var( transfer_var, previous_transfer_identity );
+                }
+            }
+            if( debug ) {
+                debug << "ENGINE_ABORT=ATOMIC_STORAGE_FAILED\n"
+                      << "OBTAINED_TARGET_ID="
+                      << ( stored ? stored->typeId().str() : "NONE" ) << "\n"
+                      << "POST_OBTAIN_LOCATION=not_called\n"
+                      << "FINAL_DESTINATION=GROUND\n"
+                      << "ROLLBACK=" << ( rolled_back ? "yes" : "no" ) << "\n";
+            }
+            say( string_format( "No pude recoger %s.", pickup_name ) );
+            clear_directed_pickup();
+            move_pause();
+            return;
+        }
+
+        mod_moves( -obtain_moves );
+        wanted_item.remove_item();
+        if( previous_transfer_identity.empty() ) {
+            stored->erase_var( transfer_var );
+        } else {
+            stored->set_var( transfer_var, previous_transfer_identity );
+        }
+        has_new_items = false;
+
+        if( debug ) {
+            debug << "ENGINE_ATOMIC_STORAGE_SUCCESS=" << pickup_name << "\n"
+                  << "OBTAINED_TARGET_ID=" << stored->typeId().str() << "\n"
+                  << "POST_OBTAIN_LOCATION=character\n"
+                  << "FINAL_DESTINATION=STORAGE\n"
+                  << "ROLLBACK=no\n";
+        }
+
+        clear_directed_pickup();
+        say( intent == npc_ai::acquisition_intent::wield ?
+             string_format( npc_ai::localized_ai_message(
+                                _( "I couldn't wield %1$s: %2$s I stored it instead." ),
+                                "No pude empuñar %1$s: %2$s Lo guardé en su lugar." ),
+                            pickup_name, wield_failure_reason ) :
+             string_format( npc_ai::localized_ai_message(
+                                _( "I picked up %s." ), "Ya recogí %s." ), pickup_name ) );
+        return;
+    }
+    // CDDA-AI DIRECTED PICKUP V1 END
+if( !rules.has_flag( ally_rule::allow_pick_up ) && is_player_ally() ) {
         add_msg_debug( debugmode::DF_NPC, "%s::pick_up_item(); Canceling on player's request", get_name() );
         fetching_item = false;
         wanted_item = {};

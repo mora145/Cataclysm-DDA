@@ -2057,11 +2057,14 @@ void activity_on_turn_move_loot( player_activity &act, Character &you )
     }
 
     if( stage == INIT ) {
-        act.coord_set.clear();
-        for( const tripoint_abs_ms &p :
-             mgr.get_near( zone_type_LOOT_UNSORTED, abspos, MAX_VIEW_DISTANCE, nullptr,
-                           _fac_id( you ) ) ) {
-            act.coord_set.insert( p );
+        // Callers may scope ACT_MOVE_LOOT to inspected source tiles.  An empty set
+        // retains the normal behavior of discovering every nearby unsorted zone.
+        if( act.coord_set.empty() ) {
+            for( const tripoint_abs_ms &p :
+                 mgr.get_near( zone_type_LOOT_UNSORTED, abspos, MAX_VIEW_DISTANCE, nullptr,
+                               _fac_id( you ) ) ) {
+                act.coord_set.insert( p );
+            }
         }
         stage = THINK;
     }

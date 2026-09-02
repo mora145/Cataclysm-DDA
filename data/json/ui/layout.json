@@ -237,7 +237,7 @@
     "label": "Environment",
     "style": "layout",
     "arrange": "rows",
-    "widgets": [ "lighting_desc", "moon_phase_desc", "wind_desc", "env_temp_desc" ]
+    "widgets": [ "lighting_desc", "active_light_desc", "moon_phase_desc", "wind_desc", "env_temp_desc" ]
   },
   {
     "id": "all_location_info_rows_layout",

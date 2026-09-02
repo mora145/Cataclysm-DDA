@@ -1,0 +1,9 @@
+[
+  {
+    "type": "sound_effect",
+    "id": "smash_fail",
+    "variant": [ "f_bathtub", "f_shower", "f_sink", "f_toilet" ],
+    "volume": 80,
+    "files": [ "smash_fail/ceramic/smash_fail_ceramic.ogg" ]
+  }
+]

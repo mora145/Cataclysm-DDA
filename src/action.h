@@ -126,6 +126,10 @@ enum action_id : int {
     ACTION_BUTCHER,
     /** Chat with something */
     ACTION_CHAT,
+    /** Talk naturally with a nearby follower NPC */
+    ACTION_AI_TALK,
+    /** Quickly tell one or all nearby followers to move to a selected location */
+    ACTION_NPC_MOVE,
     /** Toggle look mode */
     ACTION_LOOK,
     /** Peek through something (e.g. out of a curtained window) */

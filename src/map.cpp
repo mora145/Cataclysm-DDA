@@ -10463,9 +10463,12 @@ void map::update_pathfinding_cache( const tripoint_bub_ms &p ) const
         cur_value |= PathfindingFlag::Slow;
     } else if( cost <= 0 ) {
         cur_value |= PathfindingFlag::Obstacle;
-        if( terrain.has_flag( ter_furn_flag::TFLAG_CLIMBABLE ) ) {
-            cur_value |= PathfindingFlag::Climbable;
-        }
+    }
+
+    // Passable climbing aids such as downspouts are also relevant to vertical pathing.
+    if( terrain.has_flag( ter_furn_flag::TFLAG_CLIMBABLE ) ||
+        furniture.has_flag( ter_furn_flag::TFLAG_CLIMBABLE ) ) {
+        cur_value |= PathfindingFlag::Climbable;
     }
 
     if( veh != nullptr ) {

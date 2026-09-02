@@ -24,6 +24,7 @@
 #include "messages.h"
 #include "monster.h"
 #include "mtype.h"
+#include "npc_ai_event_stream.h"
 #include "output.h"
 #include "pimpl.h"
 #include "point.h"
@@ -323,10 +324,17 @@ bool Character::try_remove_grab( bool attacking )
                 }
                 // Remove only this one grab
                 remove_effect( eff.get_id(), eff.get_bp() );
+                npc_ai::record_creature_world_event( npc_ai::world_event_type::grab_broken,
+                        this, grabber, 96, "Character::try_remove_grab",
+                        disp_name() + " logro romper el agarre de " + grabber->disp_name() + "." );
             } else {
                 add_msg_player_or_npc( m_bad, _( "You try to break %s grab on your %s, but fail!" ),
                                        _( "<npcname> tries to break out of the grab, but fails!" ), grabber->disp_name( true ),
                                        eff.get_bp()->name );
+                npc_ai::record_creature_world_event( npc_ai::world_event_type::failed_escape,
+                        this, grabber, 99, "Character::try_remove_grab",
+                        disp_name() + " intento liberarse de " + grabber->disp_name() +
+                        " y fallo." );
             }
         }
 

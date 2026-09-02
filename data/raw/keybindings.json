@@ -2465,6 +2465,20 @@
   },
   {
     "type": "keybinding",
+    "name": "Talk with AI",
+    "category": "DEFAULTMODE",
+    "id": "ai_talk",
+    "bindings": [ { "input_method": "keyboard_any", "key": "q" } ]
+  },
+  {
+    "type": "keybinding",
+    "name": "Tell follower to move",
+    "category": "DEFAULTMODE",
+    "id": "npc_move",
+    "bindings": [ { "input_method": "keyboard_char", "key": "Q" }, { "input_method": "keyboard_code", "key": "q", "mod": [ "shift" ] } ]
+  },
+  {
+    "type": "keybinding",
     "name": "Look around",
     "category": "DEFAULTMODE",
     "id": "look",

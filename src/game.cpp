@@ -159,6 +159,7 @@
 #include "move_mode.h"
 #include "mtype.h"
 #include "npc.h"
+#include "npc_ai_async.h"
 #include "npctrade.h"
 #include "omdata.h"
 #include "options.h"
@@ -476,7 +477,10 @@ game::game() :
     // The reason for this move is so that g is not uninitialized when it gets to installing the parts into vehicles.
 }
 
-game::~game() = default;
+game::~game()
+{
+    npc_ai::shutdown_ai_requests();
+}
 
 // Load everything that will not depend on any mods
 void game::load_static_data()
@@ -786,6 +790,7 @@ void game::reenter_fullscreen()
  */
 void game::setup()
 {
+    npc_ai::begin_ai_session();
     new_game = true;
     {
         static_popup popup;
@@ -2705,6 +2710,8 @@ input_context get_default_mode_input_context()
     ctxt.register_action( "haul_toggle" );
     ctxt.register_action( "butcher" );
     ctxt.register_action( "chat" );
+    ctxt.register_action( "ai_talk" );
+    ctxt.register_action( "npc_move" );
     ctxt.register_action( "look" );
     ctxt.register_action( "peek" );
     ctxt.register_action( "listitems" );

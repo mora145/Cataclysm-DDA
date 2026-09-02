@@ -1,0 +1,41 @@
+{
+  "trace_name": "five_facts_four_seconds",
+  "duration_turns": 4,
+  "facts": [
+    {
+      "offset_turn": 0,
+      "type": "NPC_ATTACK",
+      "actor": "Liam",
+      "target": "zombie_A",
+      "detail": "Liam golpea al zombi A en el torso."
+    },
+    {
+      "offset_turn": 1,
+      "type": "NPC_GRABBED",
+      "actor": "zombie_B",
+      "target": "Sarah",
+      "detail": "El zombi B agarra a Sarah."
+    },
+    {
+      "offset_turn": 2,
+      "type": "ENEMY_KILLED",
+      "actor": "Miguel",
+      "target": "zombie_C",
+      "detail": "Miguel mata al zombi C."
+    },
+    {
+      "offset_turn": 3,
+      "type": "NPC_ATTACK",
+      "actor": "zombie_D",
+      "target": "Sarah",
+      "detail": "Sarah recibe dano en el brazo izquierdo."
+    },
+    {
+      "offset_turn": 4,
+      "type": "ENEMY_KILLED",
+      "actor": "Liam",
+      "target": "zombie_B",
+      "detail": "Liam mata al zombi que agarraba a Sarah."
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+[
+  {
+    "type": "sound_effect",
+    "id": "fire_gun",
+    "variant": [
+      "laser_rifle",
+      "plasma_rifle",
+      "gatling_mech_laser",
+      "coilgun",
+      "yrax_deterrent_laser",
+      "hm12",
+      "v29_turret",
+      "plasma_gun",
+      "recon_mech_laser",
+      "gatling_mech_laser_single",
+      "recon_mech_laser_single",
+      "v29",
+      "yrax_deterrent_laser",
+      "bio_laser_gun",
+      "emp_gun"
+    ],
+    "volume": 100,
+    "files": [ "fire_gun/laserguns/lasergun_1.ogg" ]
+  }
+]

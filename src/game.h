@@ -990,6 +990,10 @@ class game
     private:
 
         void chat(); // Talk to a nearby NPC  'C'
+        void ai_talk();
+        void npc_move_command();
+        void ai_talk( const std::vector<npc *> &talkers, const std::string &selection_prompt,
+                      bool report_no_available );
 
         // Internal methods to show "look around" info
         void print_fields_info( const tripoint_bub_ms &lp, const catacurses::window &w_look, int column,

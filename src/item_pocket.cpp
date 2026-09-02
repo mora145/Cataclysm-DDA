@@ -799,6 +799,16 @@ void item_pocket::casings_handle( const std::function<bool( item & )> &func )
     }
 }
 
+static void leftover_liquid_log( const std::string &line )
+{
+    const std::string path = PATH_INFO::user_dir() + "cdda_leftover_liquid.txt";
+    std::ofstream out( path, std::ios::app | std::ios::binary );
+    if( !out ) {
+        return;
+    }
+    out << "turn=" << to_turn<int>( calendar::turn ) << " | " << line << "\n";
+}
+
 void item_pocket::handle_liquid_or_spill( Character &guy, const item *avoid )
 {
     if( guy.is_npc() ) {
@@ -808,9 +818,37 @@ void item_pocket::handle_liquid_or_spill( Character &guy, const item *avoid )
 
     for( auto iter = contents.begin(); iter != contents.end(); ) {
         if( iter->made_of( phase_id::LIQUID ) ) {
+            leftover_liquid_log( string_format(
+                                     "BEGIN pocket='%s' liquid='%s' id=%s charges=%d",
+                                     get_name(), iter->display_name(), iter->typeId().str(),
+                                     iter->charges ) );
             liquid_dest_opt liquid_target;
-            while( iter->charges > 0 && liquid_handler::handle_liquid( *iter, liquid_target, avoid, 1 ) ) {
-                // query until completely handled or explicitly canceled
+            int attempt = 0;
+            while( iter->charges > 0 ) {
+                ++attempt;
+                const int before = iter->charges;
+                leftover_liquid_log( string_format(
+                                         "TRY #%d charges=%d dest=%d container='%s'",
+                                         attempt, before, static_cast<int>( liquid_target.dest_opt ),
+                                         liquid_target.item_loc ? liquid_target.item_loc->tname() : "-" ) );
+                const bool handled = liquid_handler::handle_liquid( *iter, liquid_target, avoid, 1 );
+                leftover_liquid_log( string_format(
+                                         "AFTER #%d handled=%d charges %d -> %d dest=%d container='%s'",
+                                         attempt, handled ? 1 : 0, before, iter->charges,
+                                         static_cast<int>( liquid_target.dest_opt ),
+                                         liquid_target.item_loc ? liquid_target.item_loc->tname() : "-" ) );
+                if( !handled ) {
+                    leftover_liquid_log( "STOP user canceled or declined" );
+                    break;
+                }
+                if( iter->charges >= before ) {
+                    leftover_liquid_log( "ABORT no charge progress (vanilla hang avoided)" );
+                    break;
+                }
+                if( attempt >= 8 ) {
+                    leftover_liquid_log( "ABORT too many pour attempts" );
+                    break;
+                }
             }
             if( iter->charges == 0 ) {
                 iter = contents.erase( iter );

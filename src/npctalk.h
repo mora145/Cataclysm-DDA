@@ -3,6 +3,7 @@
 #define CATA_SRC_NPCTALK_H
 
 #include <functional>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,37 @@ class item;
 class json_talk_topic;
 class npc;
 class time_duration;
+
+namespace npc_ai
+{
+
+using ai_talker_selector = std::function<int( const std::vector<npc *> & )>;
+
+struct ai_conversation_selection {
+    std::vector<npc *> targets;
+    bool everyone = false;
+};
+
+std::vector<npc *> get_nearby_ai_talkers( bool allies_only );
+std::string ai_conversation_group_target_name( const std::string &language_code );
+std::vector<std::string> ai_conversation_menu_entries( const std::vector<npc *> &talkers );
+int ai_conversation_menu_hotkey( std::size_t entry_index );
+ai_conversation_selection select_ai_conversation_targets( const std::vector<npc *> &talkers,
+        const ai_talker_selector &selector );
+npc *select_ai_conversation_target( const std::vector<npc *> &talkers,
+                                    const ai_talker_selector &selector );
+std::string ai_player_speech_log_line( bool everyone, const std::string &target_name,
+                                       const std::string &player_line,
+                                       const std::string &language_code );
+void log_ai_player_speech( bool everyone, const std::string &target_name,
+                           const std::string &player_line );
+std::string ai_talking_status_line( bool everyone, const std::string &target_name,
+                                    const std::string &language_code );
+std::size_t enqueue_group_ai_dialogue( const std::vector<npc *> &talkers,
+                                       const std::string &player_line,
+                                       std::uint64_t conversation_turn_id = 0 );
+
+} // namespace npc_ai
 
 namespace talk_function
 {

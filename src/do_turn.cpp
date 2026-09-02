@@ -52,6 +52,7 @@
 #include "mtype.h"
 #include "music.h"
 #include "npc.h"
+#include "npc_ai_async.h"
 #include "options.h"
 #include "output.h"
 #include "overmap_ui.h"
@@ -106,6 +107,7 @@ namespace turn_handler
 {
 bool cleanup_at_end()
 {
+    npc_ai::end_ai_session();
     avatar &u = get_avatar();
     if( g->uquit == QUIT_DIED || g->uquit == QUIT_SUICIDE ) {
         // Put (non-hallucinations) into the overmap so they are not lost.
@@ -457,6 +459,8 @@ bool do_turn()
     if( g->is_game_over() ) {
         return turn_handler::cleanup_at_end();
     }
+
+    npc_ai::process_ai_completions();
 
     weather_manager &weather = get_weather();
     // Actual stuff

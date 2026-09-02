@@ -55,6 +55,7 @@
 #include "monster.h"
 #include "mtype.h"
 #include "npc.h"
+#include "npc_ai_event_stream.h"
 #include "options.h"
 #include "output.h"
 #include "point.h"
@@ -1392,6 +1393,22 @@ void Creature::deal_projectile_attack( map *here, Creature *source, dealt_projec
     proj.apply_effects_damage( *this, source, dealt_dam, goodhit < accuracy_critical );
 
     int total_dam = dealt_dam.total_damage();
+
+    if( total_dam > 0 && !is_hallucination() ) {
+        const Character *injured = as_character();
+        const npc_ai::world_event_claim_level claim =
+            injured != nullptr && injured->is_limb_broken( dealt_dam.bp_hit ) ?
+            npc_ai::world_event_claim_level::limb_disabled :
+            npc_ai::world_event_claim_level::hit_confirmed;
+        const std::string attacker = source != nullptr ? source->disp_name() : "Un proyectil";
+        npc_ai::record_creature_world_event(
+            npc_ai::world_event_type::npc_attack, source, this, 78,
+            "Creature::deal_projectile_attack",
+            attacker + " impacto a " + disp_name() + " en " +
+            body_part_name_accusative( dealt_dam.bp_hit ) + " y causo " +
+            std::to_string( total_dam ) + " de dano.", true, 0, 0, 0, 0, 0,
+            body_part_name_accusative( dealt_dam.bp_hit ), total_dam, "ranged", claim );
+    }
 
     if( print_messages ) {
         messaging_projectile_attack( source, hit_selection, total_dam );

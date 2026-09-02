@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <deque>
+#include <fstream>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -26,6 +27,7 @@
 #include "options.h"
 #include "output.h"
 #include "panels.h"
+#include "path_info.h"
 #include "point.h"
 #include "rng.h"
 #include "string_formatter.h"
@@ -918,8 +920,29 @@ std::vector<std::string> Messages::dialog::filter_help_text( int width )
     return foldstring( string_format( help_fmt, type_text ), width );
 }
 
+void dump_message_log_to_file()
+{
+    // Portable installs use the game folder as user_dir.  Overwrite the same
+    // file each time the player opens the P log so the latest session is easy
+    // to inspect without a debug environment variable.
+    const std::string path = PATH_INFO::user_dir() + "cdda_message_log.txt";
+    std::ofstream out( path, std::ios::trunc | std::ios::binary );
+    if( !out ) {
+        return;
+    }
+    out << "CDDA message log dump\n";
+    out << "game_turn=" << to_turn<int>( calendar::turn ) << "\n";
+    out << "messages=" << player_messages.messages.size() << "\n\n";
+    for( const game_message &msg : player_messages.messages ) {
+        const std::string age = to_string_clipped( calendar::turn - msg.timestamp_in_turns,
+                                clipped_align::right );
+        out << age << " | " << remove_color_tags( msg.get_with_count() ) << "\n";
+    }
+}
+
 void Messages::display_messages()
 {
+    dump_message_log_to_file();
     dialog dlg;
     dlg.run();
     player_messages.curmes = calendar::turn;

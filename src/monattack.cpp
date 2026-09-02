@@ -62,6 +62,7 @@
 #include "monfaction.h"
 #include "monster.h"
 #include "mtype.h"
+#include "npc_ai_equipment_memory.h"
 #include "output.h"
 #include "pathfinding.h"
 #include "pimpl.h"
@@ -4373,7 +4374,10 @@ bool mattack::bio_op_disarm( monster *z )
         if( !here.can_put_items( tp ) ) {
             tp = foe->pos_bub( here );
         }
-        here.add_item_or_charges( tp, foe->i_rem( &*it ) );
+        item dropped_weapon = foe->i_rem( &*it );
+        npc_ai::remember_involuntary_weapon_drop( *foe, dropped_weapon,
+                here.get_abs( tp ), "bio_op_disarm" );
+        here.add_item_or_charges( tp, dropped_weapon );
     } else {
         target->add_msg_if_player( m_good, _( "but you break its grip!" ) );
     }

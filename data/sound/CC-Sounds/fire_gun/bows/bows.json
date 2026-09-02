@@ -1,0 +1,37 @@
+[
+  {
+    "type": "sound_effect",
+    "id": "fire_gun",
+    "variant": [
+      "bullet_crossbow",
+      "compositecrossbow",
+      "compcrossbow",
+      "huge_crossbow",
+      "hand_crossbow",
+      "rep_crossbow",
+      "crossbow",
+      "wristrocket",
+      "sling",
+      "slingshot",
+      "staff_sling",
+      "compositebow",
+      "reflexbow",
+      "compgreatbow",
+      "compbow",
+      "compbow_high",
+      "compbow_low",
+      "longbow",
+      "recurbow",
+      "reflexrecurvebow",
+      "shortbow",
+      "selfbow",
+      "takedown_recurbow",
+      "woodgreatbow",
+      "doublespeargun",
+      "minispeargun",
+      "speargun"
+    ],
+    "volume": 100,
+    "files": [ "fire_gun/bows/bow_1.ogg" ]
+  }
+]

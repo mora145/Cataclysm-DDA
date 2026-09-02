@@ -187,6 +187,13 @@
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CompileSpanishNpcTranslations"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(Configuration)'=='Release' Or '$(Configuration)'=='Release-NoTiles'"
+          Inputs="$(ProjectDir)..\lang\po\es_ES.po;$(ProjectDir)..\build-scripts\compile_mo_fast.ps1"
+          Outputs="$(ProjectDir)..\lang\mo\es_ES\LC_MESSAGES\cataclysm-dda.mo">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)..\build-scripts\compile_mo_fast.ps1&quot; -InputPo &quot;$(ProjectDir)..\lang\po\es_ES.po&quot; -OutputMo &quot;$(ProjectDir)..\lang\mo\es_ES\LC_MESSAGES\cataclysm-dda.mo&quot;" />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

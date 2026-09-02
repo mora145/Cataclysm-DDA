@@ -87,6 +87,10 @@ class creature_tracker
          */
         bool add( const shared_ptr_fast<monster> &critter );
         size_t size() const;
+        /** Number of active NPCs, exposed for cheap dirty checks without an O(N) range walk. */
+        size_t npc_size() const {
+            return active_npc.size();
+        }
         /** Updates the position of the given monster to the given point. Returns whether the operation
          *  was successful. */
         bool update_pos( const monster &critter, const tripoint_abs_ms &old_pos,

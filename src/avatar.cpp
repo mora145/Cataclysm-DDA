@@ -1286,6 +1286,7 @@ void avatar::set_movement_mode( const move_mode_id &new_mode )
     map &here = get_map();
 
     if( can_switch_to( new_mode ) ) {
+        const bool mode_changed = move_mode != new_mode;
         if( is_hauling() && new_mode->stop_hauling() ) {
             stop_hauling();
         }
@@ -1298,6 +1299,13 @@ void avatar::set_movement_mode( const move_mode_id &new_mode )
         here.set_transparency_cache_dirty( pos_bub() );
         here.set_seen_cache_dirty( posz() );
         recoil = MAX_RECOIL;
+        if( mode_changed && ( new_mode == move_mode_run || new_mode == move_mode_walk ) ) {
+            for( npc &companion : g->all_npcs() ) {
+                if( companion.is_active() && companion.is_player_ally() && companion.is_following() ) {
+                    companion.set_movement_mode( new_mode );
+                }
+            }
+        }
     } else {
         add_msg( new_mode->change_message( false, get_steed_type() ) );
     }

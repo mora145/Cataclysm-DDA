@@ -32,6 +32,7 @@
 #include "memory_fast.h"
 #include "mission_companion.h"
 #include "npc_attack.h"
+#include "npc_ai_pickup.h"
 #include "npc_opinion.h"
 #include "pimpl.h"
 #include "point.h"
@@ -1213,6 +1214,17 @@ class npc : public Character
         void find_item();
         // Move to, or grab, our targeted item
         void pick_up_item();
+
+        // CDDA-AI PICKUP V1 PUBLIC API
+        bool ai_request_pickup(
+            const item_location &target,
+            const tripoint_bub_ms &where,
+            std::string &error,
+            bool allow_wield_swap = true,
+            const std::string &request_text = "",
+            npc_ai::acquisition_intent intent = npc_ai::acquisition_intent::automatic,
+            const std::string &intent_source = "automatic"
+        );
         /** Picks up items and returns a list of them. */
         std::list<item> pick_up_item_map( const tripoint_bub_ms &where );
         std::list<item> pick_up_item_vehicle( vehicle &veh, int part_index );
@@ -1316,6 +1328,9 @@ class npc : public Character
 
         // accessors to ai_cache functions
         const std::vector<weak_ptr_fast<Creature>> &get_cached_friends() const;
+        const std::vector<weak_ptr_fast<Creature>> &get_cached_hostiles() const;
+        const std::vector<weak_ptr_fast<Creature>> &get_cached_neutrals() const;
+        const std::vector<dangerous_sound> &get_cached_dangerous_sounds() const;
         std::optional<int> closest_enemy_to_friendly_distance() const;
 
         const dialogue_chatbin_snippets &chat_snippets() const;
@@ -1366,6 +1381,16 @@ class npc : public Character
         std::optional<tripoint_abs_ms> pulp_location;
         time_point restock;
         bool fetching_item = false;
+
+        // CDDA-AI PICKUP V1 STATE
+        bool ai_directed_pickup = false;
+        bool ai_directed_pickup_allow_wield_swap = true;
+        npc_ai::acquisition_intent ai_directed_pickup_intent =
+            npc_ai::acquisition_intent::automatic;
+        std::string ai_directed_pickup_intent_source;
+        std::string ai_directed_pickup_request_text;
+        std::string ai_directed_pickup_target_id;
+        std::string ai_directed_pickup_target_name;
         bool has_new_items = false; // If true, we have something new and should re-equip
         int  worst_item_value = 0; // The value of our least-wanted item
 

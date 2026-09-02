@@ -42,6 +42,7 @@
 #include "monster.h"
 #include "mtype.h"
 #include "npc.h"
+#include "npc_ai_event_stream.h"
 #include "options.h"
 #include "output.h"
 #include "pocket_type.h"
@@ -606,6 +607,9 @@ int melee_actor::do_grab( monster &z, Creature *target, bodypart_id bp_id ) cons
                            bp_id->name );
             // Add grabbed - permanent, removal handled in try_remove_grab on move/wait
             target->add_effect( grab_data.grab_effect, 1_days, bp_id, true, eff_grab_strength );
+            npc_ai::record_creature_world_event( npc_ai::world_event_type::npc_grabbed,
+                    &z, target, 100, "melee_actor::do_grab",
+                    z.disp_name() + " agarro a " + target->disp_name() + "." );
         } else {
             // Monsters don't have limb scores, no need to target limbs
             target->add_effect( grab_data.grab_effect, 1_days, bodypart_str_id::NULL_ID().id(), true,
@@ -641,6 +645,7 @@ int melee_actor::do_grab( monster &z, Creature *target, bodypart_id bp_id ) cons
                                    std::inserter( intersect, intersect.begin() ) );
             tripoint_bub_ms target_square = random_entry<std::set<tripoint_bub_ms>>( intersect );
             if( !intersect.empty() && z.can_move_to( target_square ) ) {
+                const tripoint_abs_ms previous_target_abs = target->pos_abs();
                 monster *zz = target->as_monster();
                 tripoint_bub_ms zpt = monster_pos;
                 z.move_to( target_square, false, false, grab_data.drag_movecost_mod );
@@ -672,6 +677,10 @@ int melee_actor::do_grab( monster &z, Creature *target, bodypart_id bp_id ) cons
                 }
                 target->add_msg_player_or_npc( m_bad, _( "You are dragged behind the %s!" ),
                                                _( "<npcname> gets dragged behind the %s!" ), z.name() );
+                npc_ai::record_creature_world_event( npc_ai::world_event_type::dragged,
+                        &z, target, 100, "melee_actor::do_grab",
+                        z.disp_name() + " arrastro a " + target->disp_name() + ".", true, 0, 0,
+                        previous_target_abs.x(), previous_target_abs.y(), previous_target_abs.z() );
                 if( animate ) {
                     g->invalidate_main_ui_adaptor();
                     inp_mngr.pump_events();

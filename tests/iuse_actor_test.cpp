@@ -22,6 +22,7 @@
 #include "map_helpers.h"
 #include "map_selector.h"
 #include "material.h"
+#include "messages.h"
 #include "monster.h"
 #include "mtype.h"
 #include "player_helpers.h"
@@ -118,7 +119,7 @@ TEST_CASE( "manhack", "[iuse_actor][manhack]" )
     g->clear_zombies();
 }
 
-TEST_CASE( "tool_transform_when_activated", "[iuse][tool][transform]" )
+TEST_CASE( "tool_transform_when_activated", "[iuse][tool][transform][npc_ai][npc_ai_flashlight]" )
 {
     Character *dummy = &get_avatar();
     clear_avatar();
@@ -144,7 +145,12 @@ TEST_CASE( "tool_transform_when_activated", "[iuse][tool][transform]" )
             const use_function *use = flashlight.type->get_use( "transform" );
             REQUIRE( use != nullptr );
             const iuse_transform *actor = dynamic_cast<const iuse_transform *>( use->get_actor_ptr() );
+            REQUIRE( actor != nullptr );
+            CHECK_FALSE( actor->msg_transform.empty() );
+            CHECK( actor->msg_transform.translated() == "You turn the flashlight on." );
+            Messages::clear_messages();
             actor->use( dummy, flashlight, dummy->pos_bub() );
+            const auto messages_after_turning_on = Messages::recent_messages( 0 );
 
             THEN( "it becomes active" ) {
                 CHECK( flashlight.active );
@@ -154,6 +160,29 @@ TEST_CASE( "tool_transform_when_activated", "[iuse][tool][transform]" )
             }
             THEN( "name indicates (on) status" ) {
                 CHECK( flashlight.tname() == "flashlight (on)" );
+            }
+            THEN( "the message describes the completed transition" ) {
+                REQUIRE( !messages_after_turning_on.empty() );
+                CHECK( messages_after_turning_on.back().second == "You turn the flashlight on." );
+            }
+
+            AND_WHEN( "flashlight is turned off again" ) {
+                use = flashlight.type->get_use( "transform" );
+                REQUIRE( use != nullptr );
+                actor = dynamic_cast<const iuse_transform *>( use->get_actor_ptr() );
+                REQUIRE( actor != nullptr );
+                CHECK_FALSE( actor->msg_transform.empty() );
+                CHECK( actor->msg_transform.translated() == "You turn the flashlight off." );
+                Messages::clear_messages();
+                actor->use( dummy, flashlight, dummy->pos_bub() );
+                const auto messages_after_turning_off = Messages::recent_messages( 0 );
+
+                THEN( "it becomes inactive and reports the off transition" ) {
+                    CHECK_FALSE( flashlight.active );
+                    CHECK( flashlight.tname() == "flashlight (off)" );
+                    REQUIRE( !messages_after_turning_off.empty() );
+                    CHECK( messages_after_turning_off.back().second == "You turn the flashlight off." );
+                }
             }
         }
     }

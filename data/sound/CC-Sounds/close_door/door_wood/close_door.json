@@ -1,0 +1,18 @@
+[
+  {
+    "type": "sound_effect",
+    "id": "close_door",
+    "variant": [
+      "t_door_o",
+      "t_door_red_o",
+      "t_door_white_o",
+      "t_door_gray_o",
+      "t_door_green_o",
+      "t_door_lab_o",
+      "t_door_o_peep",
+      "t_rdoor_o"
+    ],
+    "volume": 70,
+    "files": [ "close_door/door_wood/close_door.ogg" ]
+  }
+]

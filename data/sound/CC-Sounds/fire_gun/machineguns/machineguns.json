@@ -1,0 +1,21 @@
+[
+  {
+    "type": "sound_effect",
+    "id": "fire_gun",
+    "variant": [
+      "m240",
+      "m249",
+      "m249_semi",
+      "m2browning",
+      "m2browning_sawn",
+      "m60",
+      "m60_semi",
+      "rm298",
+      "rm614_lmg",
+      "bigun",
+      "m134"
+    ],
+    "volume": 100,
+    "files": [ "fire_gun/machineguns/machinegun_1.ogg" ]
+  }
+]

@@ -1,0 +1,1188 @@
+INFORME DE AUDITORÍA — NPC AI
+Fecha: 27-08-2026
+
+La evolución es viable sin reescribir el sistema. El principal problema no es que falten prompts ni percepción: es que Combat Social detecta acontecimientos útiles, pero después puede descartarlos por un cooldown general, por una solicitud pendiente o porque solo conserva el evento de mayor prioridad de ese turno. Al actualizar inmediatamente el snapshot, los eventos descartados no vuelven a aparecer.
+
+Mi recomendación central es evolucionar de:
+
+evento -> cooldown del hablante -> request o descarte
+
+a:
+
+candidatos estructurados -> prioridad -> deduplicación por suceso -> coalescing -> request
+
+El estado auditado quedó intacto:
+
+- Rama: checkpoint-ai-2026-08-27
+- HEAD: c9aece0c33
+- git diff: vacío
+- Working tree: limpio
+- No se modificaron archivos durante la auditoría.
+- No se compiló ni se ejecutaron tests.
+- No se hizo commit.
+
+======================================================================
+A. COMBAT SOCIAL ACTUAL
+======================================================================
+
+1. PIPELINE ACTUAL
+
+El hook principal está en src/npcmove.cpp, dentro de npc::move(), justo después de regen_ai_cache():
+
+npc::move
+  -> regen_ai_cache
+  -> process_combat_social(npc)
+  -> process_spontaneous_speech(npc)
+  -> decisión física vanilla
+
+process_combat_social():
+
+1. Construye combat_perception_snapshot.
+2. Compara el snapshot actual con el anterior.
+3. Añade eventos externos, actualmente muertes visibles.
+4. Selecciona un solo evento, el de mayor importancia.
+5. Aplica deduplicación y cooldown.
+6. Construye el prompt en el hilo principal.
+7. Encola una request inmutable.
+8. El worker consulta Ollama.
+9. La completion vuelve al hilo principal.
+10. Se reconstruye el estado actual y se revalida.
+11. Se valida idioma, promesas tácticas, entidades y repetición.
+12. npc::say() introduce la frase en sonido y message log.
+13. Opcionalmente se encola una réplica NPC->NPC.
+
+La implementación principal está en src/npc_ai_combat_social.cpp, process_combat_social().
+
+2. COOLDOWNS ACTUALES
+
+En src/npc_ai_combat_social.cpp:
+
+- Solicitud ordinaria: 30 turnos, por NPC speaker.
+- Solicitud urgente: 5 turnos, por NPC speaker.
+- Mismo evento + target: 120 turnos, por NPC speaker.
+- Edad máxima de resultado de combate: 45 turnos.
+- Edad máxima de COMBAT_END: 90 turnos.
+
+El supuesto “bypass urgente” no rompe realmente el cooldown: reemplaza 30 por 5. Por tanto, si Liam habló en T0 y es arrastrado en T+2, todavía queda bloqueado.
+
+El módulo ambiental es distinto y no debe confundirse con Combat Social. En src/npc_ai_spontaneous.cpp tiene:
+
+- evaluación cada 20 turnos;
+- separación global de 60 turnos;
+- separación individual según prioridad:
+  - prioridad >=90: 2 minutos;
+  - >=70: 4 minutos;
+  - >=40: 8 minutos;
+  - menor: 15 minutos;
+- mínimo de 45 turnos entre llamadas del modelo;
+- comentario ambiental cada 15-35 minutos.
+
+Cuando current.combat es verdadero, el módulo ambiental retorna y deja el diálogo de combate a Combat Social.
+
+3. IDENTIDAD ACTUAL DE EVENTOS
+
+La clave es:
+
+event_type + ":" + target_id + ":" + target_name
+
+Está en src/npc_ai_combat_social.cpp, event_key().
+
+Incluye indirectamente al speaker porque cada NPC posee su propio combat_social_state, pero la cadena no incluye:
+
+- actor o causante;
+- killer;
+- posición;
+- ID estable de monstruo;
+- encounter generation;
+- event generation;
+- número de ocurrencia.
+
+Para personajes sí se utiliza character_id. Para monstruos, character_id queda normalmente en -1, de modo que dos zombis del mismo tipo pueden compartir la misma identidad lógica.
+
+ENEMY_KILLED tampoco asigna un ID de instancia: usa principalmente el nombre traducido.
+
+4. DEDUPLICACIÓN ACTUAL
+
+last_event_turn solo se actualiza cuando la request logra encolarse. Por tanto, los 120 turnos significan “última request aceptada de esta clave”, no “último evento físico observado”.
+
+Si cambia el tipo de evento pero se mantiene la misma criatura, la clave cambia. Por ejemplo:
+
+ALLY_GRABBED:-1:zombi aferrador
+DRAGGED:-1:zombi aferrador
+
+serían diferentes, aunque DRAGGED todavía no existe.
+
+El historial de habla reciente está en src/npc_ai_memory.cpp:
+
+- máximo 6 frases;
+- edad máxima 600 turnos;
+- normalización Unicode/minúsculas/puntuación;
+- igualdad exacta;
+- inclusión de una frase en otra;
+- similitud Jaccard de tokens >=0,70;
+- historial separado por NPC;
+- intención asociada a cada frase;
+- hasta 4 entradas incluidas en prompts.
+
+Esta deduplicación es útil y conviene conservarla. No es la principal causa del silencio.
+
+5. COALESCING Y SOLICITUDES PENDIENTES
+
+Combat Social no tiene coalescing real.
+
+Cuando se detectan varios eventos en una evaluación, select_event() conserva solo el de mayor importancia. Los demás desaparecen. Después:
+
+- se limpian los eventos externos;
+- se actualiza state.last al snapshot actual;
+- si el ganador queda bloqueado, no se conserva para el siguiente turno.
+
+Con una request pendiente:
+
+- COMBAT_END puede supersederla;
+- un evento urgente puede supersederla si tiene importancia estrictamente mayor;
+- cualquier evento ordinario, igual o inferior se descarta;
+- no existe acumulación;
+- no existe un “pending candidate”;
+- no existe merge de secuencias.
+
+Superseder tampoco interrumpe una inferencia HTTP ya iniciada. La completion antigua será ignorada, pero Ollama continuará ocupando el único worker hasta terminar.
+
+6. EVENTOS QUE RECIBE ACTUALMENTE
+
+El enum se encuentra en src/npc_ai_combat_social.h. Se producen actualmente:
+
+- COMBAT_START
+- COMBAT_END
+- ENEMY_SPOTTED
+- DANGEROUS_ENEMY_SPOTTED
+- ENEMY_GROUP_DETECTED
+- NPC_ATTACK, realmente cambio/movimiento de objetivo
+- NPC_HIT
+- NPC_BADLY_HURT
+- NPC_BLEEDING
+- PLAYER_HIT
+- PLAYER_BADLY_HURT
+- PLAYER_BLEEDING
+- PLAYER_GRABBED
+- PLAYER_SURROUNDED
+- ALLY_HIT
+- ALLY_BADLY_HURT
+- ALLY_BLEEDING
+- ALLY_GRABBED
+- ALLY_SURROUNDED
+- LOW_STAMINA
+- LOW_AMMO
+- OUT_OF_AMMO
+- RETREAT_STARTED
+- ALLY_RETREATING
+- ENEMY_KILLED
+
+WEAPON_JAMMED está declarado, traducido a nombre/intención y soportado por el prompt, pero no encontré ningún productor actual.
+
+ENEMY_KILLED se genera mediante un hook directo en src/monster.cpp, que llama a notify_visible_enemy_killed() antes de completar la muerte. Solo lo reciben aliados que realmente ven al enemigo y lo consideran hostil.
+
+7. EVENTOS QUE PIERDE
+
+Actualmente no recibe de forma causal:
+
+- ataques fallidos;
+- esquivas;
+- golpe crítico explícito;
+- atacante responsable del daño;
+- NPC salvando a otro;
+- agarre roto;
+- intento de escape;
+- escape fallido;
+- arrastre;
+- actor que arrastra;
+- secuencia de arrastres;
+- curación iniciada/completada como evento AI estructurado;
+- atasco de arma;
+- ruido narrativamente significativo más allá del cache acústico actual;
+- relación causal “Kim golpeó al monstruo que arrastraba a Liam”.
+
+Los cambios de HP permiten inferir que alguien recibió daño, pero no quién lo causó.
+
+Los ataques del event bus indican attacker, victim y hits, pero para monstruos usan mtype_id, no una instancia estable. character_takes_damage contiene personaje, daño, parte corporal y dolor, pero no atacante.
+
+8. GRABBED
+
+Existe parcialmente:
+
+- el snapshot propio contiene grabbed;
+- las criaturas visibles contienen grabbed;
+- se generan PLAYER_GRABBED y ALLY_GRABBED en transición false -> true.
+
+Problema importante: no existe NPC_GRABBED para el propio observador. Si Liam es agarrado:
+
+- Kim puede producir ALLY_GRABBED;
+- Liam conoce snapshot.grabbed, pero esa transición no crea un evento propio que lo haga pedir ayuda.
+
+Además, un agarre que continúa varios turnos no vuelve a producir transición.
+
+El event bus posee character_gains_effect y character_loses_effect, pero no identifica al monstruo que causó el efecto. Puede ayudar para detectar inicio/fin, no para construir toda la relación causal.
+
+9. FAILED_ESCAPE
+
+No existe en Combat Social ni en el event bus.
+
+La decisión real se encuentra en Character::try_remove_grab(), en src/character_escape.cpp. Esa función conoce con certeza si:
+
+- había agarre;
+- el personaje intentó liberarse;
+- el intento falló;
+- el agarre fue eliminado.
+
+Es el hook futuro más preciso para FAILED_ESCAPE y GRAB_BROKEN. Sería un cambio local y no requiere modificar stamina ni el cálculo de combate.
+
+10. DRAGGED
+
+No existe.
+
+El arrastre real ocurre en melee_actor::do_grab(), en src/mattack_actors.cpp. Después de mover físicamente al atacante y al objetivo se muestra:
+
+You are dragged behind...
+<npcname> gets dragged behind...
+
+Ese punto conoce:
+
+- monstruo atacante;
+- personaje arrastrado;
+- posición anterior;
+- posición nueva;
+- distancia;
+- resultado confirmado.
+
+Es mejor añadir en el futuro una notificación estructurada ahí que intentar deducir el arrastre desde el message log.
+
+Conclusión: sí, los cooldowns pueden convertirse principalmente en protección contra el mismo evento. El requisito es conservar los eventos nuevos en una pequeña bandeja/coalescer por NPC, porque simplemente quitar el cooldown de 30 sin conservar/coalescer candidatos aumentaría requests y spam.
+
+======================================================================
+B. ASYNC Y LATENCIA
+======================================================================
+
+11. COLA ACTUAL
+
+La cola está en src/npc_ai_async.h y src/npc_ai_async.cpp.
+
+Usa tres std::deque:
+
+requests_[low]
+requests_[medium]
+requests_[high]
+
+Es FIFO dentro de cada prioridad y prioridad estricta entre niveles.
+
+Tipos actuales:
+
+- spontaneous
+- combat_social
+- direct_dialogue
+- legacy_prompt
+- watch_resolution
+- pickup_resolution
+- wield_resolution
+
+12. WORKERS
+
+Existe exactamente un std::thread worker_.
+
+La construcción de contexto y prompt sucede en el hilo principal antes de encolar. Solo la llamada HTTP/Ollama ocurre en el worker.
+
+process_ai_completions() se ejecuta al comenzar do_turn() y game::handle_action(), por lo que una respuesta terminada puede esperar hasta la siguiente iteración del juego para mostrarse.
+
+13. PRIORIDAD REAL
+
+Sí existe prioridad:
+
+- AI_TALK individual/grupal: alta.
+- Comandos estructurados con resolución AI: alta.
+- Combat Social importancia >=94: alta.
+- Combat Social menor: media.
+- NPC->NPC: media.
+- Spontaneous ambiental: baja.
+- Legacy /ai: alta.
+
+Una pregunta del jugador adelanta requests ambientales que siguen en cola, pero no puede interrumpir una request ambiental que el único worker ya está procesando.
+
+14. PLAYER CHAT
+
+El prompt se construye en el hilo principal en src/npctalk.cpp.
+
+La dedup key es:
+
+direct:<player_id>:<npc_id>
+
+Mientras existe una request directa pendiente para Liam, una segunda pregunta a Liam es rechazada. No se acumula ni sustituye. Esto explica que una pregunta grupal posterior pueda perder una o más respuestas.
+
+La validación de completions directas solo comprueba:
+
+- misma sesión;
+- mismo jugador;
+- NPC todavía existente;
+- NPC vivo/no alucinación.
+
+No reconstruye percepción ni valida que el contexto conversacional siga siendo actual. La revalidación fuerte está en Combat Social, no en el chat directo general.
+
+15. GROUP CHAT
+
+enqueue_group_ai_dialogue(), en src/npctalk.cpp:
+
+- construye un prompt independiente por NPC;
+- conserva personalidad, memoria, relación, estado y percepción individual;
+- encola una request directa por NPC;
+- no elige portavoz;
+- cada respuesta es independiente.
+
+Eso ya coincide con el comportamiento deseado.
+
+Sin embargo, el único worker procesa Liam y Kim serialmente. Ollama podría aceptar concurrencia desde otros clientes, pero esta aplicación nunca le envía dos requests simultáneas.
+
+No recomiendo aumentar workers todavía. Con qwen3:14b, dos inferencias simultáneas pueden competir por VRAM/RAM y empeorar la latencia total. Primero hay que medir.
+
+16. NPC->NPC
+
+maybe_enqueue_npc_reply() está en src/npc_ai_spontaneous.cpp.
+
+Comportamiento:
+
+- profundidad máxima: 1;
+- una frase inicial puede generar como máximo una réplica;
+- la réplica no puede generar otra réplica;
+- se elige un listener aliado, visible, cercano y sin request espontánea pendiente;
+- se ordenan por distancia y nombre;
+- request con prioridad media;
+- dedup por listener + conversation ID.
+
+Por tanto:
+
+Kim -> Liam
+Liam -> Kim
+FIN
+
+es posible, pero no una cadena infinita.
+
+17. RETRIES
+
+Idioma inválido:
+
+- máximo un retry;
+- mismo tipo/prioridad;
+- nueva dedup key con :language_retry;
+- la corrección se hace también de forma async;
+- si el retry no se acepta o vuelve a fallar, se usa un fallback determinista.
+
+El retry puede duplicar la latencia y queda detrás de cualquier trabajo de prioridad superior.
+
+18. IDIOMA GENERADO
+
+current_dialogue_language_code() consulta directamente TranslationManager.
+
+generated_text_matches_dialogue_language() solo detecta 20 cláusulas inglesas muy evidentes, por ejemplo:
+
+- this is
+- there are
+- we need
+- I'm
+- I'll
+- seems like
+- coast is clear
+
+No es un detector completo. Una frase inglesa sin esas construcciones puede pasar.
+
+Todas las rutas LLM principales usan esta validación:
+
+- direct dialogue;
+- Combat Social;
+- spontaneous;
+- NPC->NPC, porque usa la completion spontaneous;
+- group chat, porque usa direct dialogue.
+
+Las frases deterministic/JSON snippets no pasan por este validador.
+
+19. PRINCIPAL SOSPECHA DE LATENCIA
+
+Orden probable:
+
+1. Inferencia de qwen3:14b.
+2. Head-of-line blocking por un único worker.
+3. Group chat serial.
+4. Request activa no cancelable.
+5. Retry de idioma.
+6. Prompt/contexto construido por cada NPC.
+7. Espera hasta el siguiente do_turn/handle_action.
+
+El cliente usa WinHTTP síncrono en el worker:
+
+- localhost:11434;
+- /api/generate;
+- stream=false;
+- think=false;
+- keep_alive=30m;
+- timeout de recepción: 60 segundos.
+
+Está en src/npc_ai_client.cpp.
+
+20. INSTRUMENTACIÓN RECOMENDADA
+
+Añadir timestamps monotónicos para:
+
+- creación;
+- enqueue;
+- dequeue/worker start;
+- HTTP send;
+- HTTP response;
+- parse;
+- completion queued;
+- completion recogida por main thread;
+- validación;
+- display o descarte.
+
+Registrar además:
+
+- request ID;
+- conversation turn ID;
+- tipo y prioridad;
+- NPC;
+- profundidad de cola por prioridad;
+- tiempo esperando en cola;
+- tiempo HTTP;
+- bytes de prompt/respuesta;
+- retry count;
+- edad en turnos;
+- motivo exacto de descarte;
+- tiempo total hasta message log.
+
+Actualmente Combat Social tiene mensajes de debug sobre evento, enqueue, stale y aceptación. Spontaneous escribe a una ruta absoluta hardcodeada de OneDrive, incluyendo respuestas crudas, pero ninguno mide las fases de latencia. Esa ruta es útil provisionalmente, pero no es portable ni debería ser la infraestructura definitiva.
+
+======================================================================
+C. HISTORIAL P
+======================================================================
+
+21. CÓMO FUNCIONA
+
+La tecla vanilla predeterminada es Shift+P, acción messages. El usuario puede referirse a ella como p según configuración/teclado.
+
+Abre Messages::display_messages(), en src/messages.cpp.
+
+22. FUENTE UTILIZADA
+
+La fuente es un singleton interno messages_impl player_messages con:
+
+std::deque<game_message> messages;
+
+Cada game_message contiene:
+
+- texto final;
+- turno;
+- user action timestamp;
+- contador de repeticiones;
+- estado de message cooldown;
+- game_message_type.
+
+Es texto ya renderizado/localizado. Mensajes idénticos dentro de tres turnos se agrupan como x N.
+
+23. USO ACTUAL POR EL LLM
+
+El LLM no lee Messages::recent_messages().
+
+La única utilización externa encontrada es el memorial logger, que incorpora los últimos 20 mensajes. Combat Social no consume el historial de P.
+
+24. INFORMACIÓN QUE PODRÍA APORTAR
+
+Aporta secuencia narrativa que hoy falta:
+
+- quién intentó qué;
+- orden aproximado;
+- fallos;
+- arrastres;
+- esquivas;
+- frases deterministic;
+- causalidad visible para el jugador.
+
+Pero al ser texto final pierde:
+
+- IDs;
+- actor y target tipados;
+- percepción de cada NPC;
+- posición;
+- instancia exacta de monstruo;
+- diferencia entre hecho físico y mensaje UI;
+- importancia;
+- validez actual;
+- idioma independiente.
+
+No recomiendo pasar el historial textual al LLM ni escribirlo a un archivo para que el modelo lo relea.
+
+25. RECENT WORLD EVENT BUFFER
+
+Sí es una buena idea, como complemento.
+
+Propondría una estructura en RAM:
+
+sequence_id
+game_turn
+event_type
+actor_ref
+target_ref
+actor_name_snapshot
+target_name_snapshot
+position
+importance
+encounter_id
+confirmed_outcome
+
+La visibilidad/audibilidad debería determinarse al seleccionar contexto para cada NPC, no asumir que todos conocieron el evento.
+
+El prompt recibiría solo 6-12 acontecimientos relevantes, claramente rotulados como RECENT HISTORY.
+
+26. COSTE
+
+Un ring buffer de 128-512 eventos significativos ocuparía decenas o pocos cientos de KB. El coste relevante no es memoria, sino:
+
+- observar demasiados eventos;
+- ejecutar path/perception para cada NPC;
+- inflar prompts;
+- generar requests por cada hit.
+
+Debe almacenar eventos baratos y aplicar relevancia/percepción solo cuando se prepare un candidato o prompt.
+
+CURRENT STATE debe reconstruirse siempre al crear y aplicar la completion. La historia nunca debe sustituirlo.
+
+27. JSONL OPCIONAL
+
+Sí aportaría mucho valor para depuración.
+
+Recomendación:
+
+- desactivado por defecto;
+- opción debug específica;
+- ubicado bajo el directorio de usuario/mundo, no en el repositorio;
+- escritura batched o con buffer;
+- rotación/límite de tamaño;
+- no guardar prompts completos salvo modo explícito;
+- incluir sequence ID, turn, actor/target, prioridad, recipients, coalescing y motivo de descarte.
+
+El LLM nunca debería depender del JSONL.
+
+======================================================================
+D. IDIOMA
+======================================================================
+
+28. ORIGEN DE CADA TEXTO INGLÉS
+
+“Could be a bloodbath…”
+- Origen: JSON snippet.
+- Ruta: <combat_noise_warning> -> npc::handle_sound() -> warn_about("combat_noise").
+
+“Damn, sounds like someone's unleashing…”
+- Origen: JSON snippet.
+- Misma categoría de ruido de combate.
+
+“C'mon, bandages!”
+- Origen: JSON snippet.
+- Ruta: <heal_self> / <heal_self_warning> -> npc::heal_self().
+
+“Bandaging this up! Damn…”
+- Origen: dos snippets concatenados.
+- <heal_self_warning> + <heal_self_flavor>.
+
+“Move over, colleague.”
+- Origen: familia JSON deterministic.
+- Ruta: <let_me_pass> -> npc::move_to().
+
+“Make way, compañero.”
+- Origen: JSON con tag anidado.
+- Frase exterior inglesa + <name_g> traducido.
+
+“Allow me to pass, muchacho.”
+- Igual: <let_me_pass> + <name_g>.
+
+“Hey daddy, can I get through?”
+- Probablemente <let_me_pass>.
+- Existe “Hey, <name_g>, can I get through?”. “daddy” exacto no aparece en los datos actuales; puede ser dawg, datos runtime antiguos o transcripción.
+
+“Looks like the calm…”
+- Origen: JSON snippet.
+- <general_danger> al subir la evaluación de peligro.
+
+“Seems like the coast is clear…”
+- Origen: JSON snippet, no LLM.
+- <its_safe> mediante warn_about("relax").
+
+“I dropped…”
+- Origen: C++ deterministic AI action.
+- src/npc_ai_equipment.cpp.
+
+“I'm putting on…”
+- Origen: C++ deterministic AI action.
+- src/npc_ai_equipment.cpp.
+
+“I don't have or remember…”
+- Origen: C++ deterministic fallback.
+- src/npc_ai_equipment.cpp.
+
+Los snippets de combate están en data/json/npcs/snippets/talk_tags_combat.json. Los de movimiento están en data/json/npcs/snippets/talk_tags_line.json.
+
+“Seems like the coast is clear…” se origina exactamente así:
+
+npc::regen_ai_cache
+  -> danger anterior > muy bajo
+  -> danger actual <= 0
+  -> combat_social_situation_is_clear()
+  -> warn_about("relax", 30_minutes)
+  -> <its_safe>
+  -> npc::say()
+
+Es síncrono y no pasa por la queue ni por la revalidación async. Actualmente existe un fallback puntual en npcmove.cpp que sustituye ese snippet si el juego está en español. Es una mitigación específica, no una solución general.
+
+29. PIPELINE PO/MO
+
+El pipeline correcto es:
+
+C++ _() + JSON traducible
+  -> lang/update_pot.sh
+  -> cataclysm-dda.pot
+  -> msgmerge hacia es_ES.po
+  -> traducción msgstr
+  -> msgfmt
+  -> lang/mo/es_ES/LC_MESSAGES/cataclysm-dda.mo
+  -> TranslationManager runtime
+
+update_pot.sh extrae tanto C++ como JSON. lang/Makefile, compile_mo.sh y el target CMake locale ejecutan msgfmt.
+
+30. CATÁLOGO USADO POR EL RELEASE
+
+El debug.log confirma:
+
+Setting language to: 'es_ES'
+Scanning core translations from lang/mo/
+
+El Release actual usa:
+
+lang/mo/es_ES/LC_MESSAGES/cataclysm-dda.mo
+
+config/options.json tiene USE_LANG="", por lo que se toma el locale del sistema; en este equipo termina siendo es_ES.
+
+No hay un .mo de es_AR instalado actualmente.
+
+31. CAUSA PROBABLE
+
+Hay dos fallos distintos:
+
+1. Muchos snippets tienen msgstr "" incluso en el PO actual. En ese caso el fallback correcto de gettext es el inglés fuente.
+2. El PO es más nuevo que el MO:
+   - es_ES.po: 27-08-2026 15:05
+   - es_ES.mo: 26-08-2026 14:15
+
+Los strings personalizados de npc_ai_equipment.cpp ni siquiera aparecen todavía en el PO/MO actual, lo que indica que el POT/merge no se actualizó después de añadirlos.
+
+El proyecto MSBuild define LOCALIZE, pero no encontré un target MSBuild que ejecute msgfmt. Compilar el .exe no regenera automáticamente el .mo.
+
+32. SOLUCIÓN RECOMENDADA
+
+No crear una lista creciente de:
+
+if( text == "English sentence" )
+
+La solución correcta futura es:
+
+1. Regenerar POT.
+2. Fusionar es_ES.po.
+3. Traducir las entradas nuevas y los snippets vacíos relevantes.
+4. Compilar es_ES.mo.
+5. Añadir un target/script reproducible para el flujo MSBuild.
+6. Validar que el MO es más nuevo que el PO.
+7. Añadir una prueba de presencia de cadenas personalizadas en el catálogo.
+8. Mantener por separado la validación/retry del texto generado por LLM.
+9. Eventualmente retirar el fallback específico de “coast is clear”.
+
+Para el LLM, mejoraría además el validador: actualmente es una blacklist corta de cláusulas inglesas. Una heurística conservadora de proporción de palabras funcionales españolas/inglesas sería más general sin penalizar nombres de monstruos.
+
+33. <npcname>
+
+El origen es src/character.cpp, Character::can_try_dodge():
+
+_( "<npcname>'s stamina is too low to attempt to dodge." )
+
+Character::on_try_dodge() muestra el ret_val con un add_msg() crudo, por lo que no ejecuta el sustituidor.
+
+El formatter correcto es Creature::replace_with_npc_name(), usado por:
+
+- npc::add_msg_if_npc();
+- npc::add_msg_player_or_npc().
+
+La corrección futura debe cambiar únicamente la ruta de presentación del mensaje. No requiere tocar el criterio de stamina, su consumo, recuperación ni APIs.
+
+======================================================================
+E. Q MAYÚSCULA
+======================================================================
+
+34. ACCIÓN VANILLA A REUTILIZAR
+
+No existe actualmente una ACTION_MOVE_NPC_TO_POSITION independiente.
+
+La funcionalidad está dentro de game::chat() como:
+
+NPC_CHAT_MOVE_TO_POS
+
+Se accede actualmente con:
+
+C
+-> Tell someone to move to location…
+-> G
+
+El bloque está en src/npctalk.cpp.
+
+35. SELECTOR ACTUAL
+
+Usa npc_select_menu() en src/npctalk.cpp.
+
+Comportamiento:
+
+- 0 NPC: retorna -1;
+- 1 NPC: retorna directamente 0;
+- 2+: añade primero los NPC;
+- añade Everyone al final;
+- usa MENU_AUTOASSIGN.
+
+Esto explica el orden y los saltos observados.
+
+36. CURSOR/DESTINATION
+
+Después del selector llama a:
+
+std::optional<tripoint_bub_ms> p = look_around();
+
+Luego:
+
+- rechaza solo here.impassable(*p);
+- transforma a posición absoluta;
+- asigna goto_to_this_pos.
+
+El NPC ejecuta después:
+
+npc_goto_to_this_pos
+-> update_path()
+-> map::route()
+-> move_to_next()
+
+No se necesita pathfinding nuevo.
+
+37. “TODO EL MUNDO”
+
+Seleccionar Everyone asigna exactamente la misma coordenada a todos:
+
+for( npc *them : followers ) {
+    them->goto_to_this_pos = here.get_abs( *p );
+}
+
+No existe formación ni distribución de destinos.
+
+Los conflictos se mitigan parcialmente porque npc::move_to() intenta empujar a NPC no hostiles mediante move_away_from() y usa un conjunto para evitar recursión infinita. Esto puede producir frases <let_me_pass>, jostling o demoras.
+
+38. CONFLICTO DE Q
+
+Q está libre en DEFAULTMODE.
+
+Bindings actuales:
+
+- q: ai_talk;
+- C: chat vanilla;
+- P: message log;
+- Q: sin acción de gameplay.
+
+Q sí se usa como QUIT en muchos contextos de menú:
+
+- opciones;
+- mapa;
+- ayuda;
+- selección de mundo;
+- diálogos.
+
+Eso no es conflicto si el nuevo binding se limita a DEFAULTMODE. No debe registrarse globalmente.
+
+39. DIFICULTAD DEL SELECTOR SOLICITADO
+
+La dificultad es baja.
+
+No recomiendo modificar indiscriminadamente npc_select_menu(), porque también se usa para GUARD/FOLLOW y podría alterar sus valores de retorno.
+
+La integración mínima sería:
+
+1. Extraer el bloque vanilla de movimiento a un helper reutilizable.
+2. Crear un selector específico o parametrizable para “grupo primero”.
+3. Añadir entradas con IDs y hotkeys explícitos:
+   - 1 Todo el mundo
+   - 2 Liam
+   - 3 Kim
+4. Traducir mediante _("Everyone"), que ya tiene “Todo el mundo” en el PO.
+5. Hacer que tanto C -> G como la nueva acción Q llamen al mismo helper, si se desea unificar.
+
+40. CASO DE UN NPC
+
+Recomiendo la opción B: ir directamente al cursor.
+
+Razones:
+
+- coincide con el comportamiento vanilla de npc_select_menu();
+- evita un menú donde “Todo el mundo” y “Liam” significan exactamente lo mismo;
+- mantiene Q como acceso rápido.
+
+Si se quiere uniformidad visual absoluta, la opción A es posible, pero añade una decisión sin diferencia funcional.
+
+======================================================================
+F. ENTER_NEAREST_BUILDING
+======================================================================
+
+41. INFRAESTRUCTURA DISPONIBLE
+
+Existe:
+
+- map::is_outside();
+- outside cache;
+- TFLAG_INDOORS;
+- terreno/muebles;
+- map::route();
+- npc::update_path();
+- npc::get_pathfinding_settings();
+- npc::get_path_avoid();
+- map::has_floor_or_water();
+- npc::can_move_to();
+- game::is_dangerous_tile();
+- apertura normal de puertas;
+- bash según reglas del NPC;
+- pathfinding multinivel;
+- goto_to_this_pos.
+
+La outside cache se construye en src/map.cpp, map::build_outside_cache().
+
+42. DEFINICIÓN TÉCNICA RECOMENDADA DE “CASA”
+
+No recomiendo “buscar literalmente la casa más cercana”.
+
+CDDA no posee una abstracción local universal y fiable de objeto building. El overmap terrain puede decir “house”, pero es demasiado grueso para identificar habitaciones, accesos o edificios mapgen arbitrarios.
+
+Recomiendo interpretar:
+
+ENTER_NEAREST_BUILDING
+aproximadamente igual a
+ENTER_NEAREST_REACHABLE_SAFE_INTERIOR
+
+Criterios:
+
+- !map::is_outside(tile);
+- tile soportado/transitable;
+- ruta válida;
+- no peligroso;
+- no ocupado/reservado;
+- sin hostil;
+- preferentemente dentro de un componente interior conectado;
+- con puntuación por cobertura y cerramiento.
+
+Hay que decidir explícitamente si interiores de vehículos cuentan. Mi recomendación inicial sería excluirlos, salvo que la orden mencione vehículo.
+
+43. PATHFINDING
+
+C++ debe:
+
+1. localizar candidatos cercanos;
+2. puntuarlos geométricamente;
+3. filtrar peligros/ocupación;
+4. probar rutas normales solo sobre los mejores;
+5. asignar destino;
+6. dejar que npc::update_path() y move_to_next() ejecuten.
+
+No escanearía toda la reality bubble con una ruta para cada tile y NPC: sería innecesariamente caro.
+
+44. DISTRIBUCIÓN GRUPAL
+
+La orden vanilla grupal no resuelve esto.
+
+Para ENTER_NEAREST_BUILDING conviene seleccionar:
+
+- un componente interior/área objetivo común;
+- un tile distinto por NPC;
+- tiles cercanos al anchor;
+- asignación greedy por coste de ruta;
+- reserva temporal de destinos.
+
+Esto evita que Liam, Kim y Son intenten ocupar la misma casilla. Puede seguir usando goto_to_this_pos como ejecución básica, pero cada NPC debe recibir una coordenada diferente.
+
+45. RIESGOS
+
+- porches/aleros marcados como interiores;
+- vehículos techados;
+- sótanos: todo z<0 se considera interior;
+- puertas cerradas o bloqueadas;
+- edificio cercano pero inaccesible;
+- rutas con fuego/trampas;
+- grupo separándose entre dos interiores;
+- reevaluación durante combate;
+- múltiples pathfinds costosos;
+- orden ambigua si el grupo ya está dentro.
+
+No usaría overmap terrain como autoridad principal. Puede aportar una preferencia secundaria.
+
+46. ACTIVACIÓN MEDIANTE GRITO
+
+Es viable sin reemplazar el grito vanilla.
+
+El texto se recoge en game::chat(), NPC_CHAT_SENTENCE. Después:
+
+add_msg("You yell...")
+-> Character::shout()
+-> sounds::sound(alert/order)
+-> npc::handle_sound()
+
+Actualmente el grito libre usa is_order=false, y npc::handle_sound() recibe una descripción ya renderizada, no una intención limpia.
+
+La integración menos invasiva sería:
+
+1. conservar el grito vanilla exactamente;
+2. después de capturar el texto original, ejecutar un parser determinista de una whitelist de órdenes;
+3. seleccionar solo NPC que realmente puedan oír;
+4. si reconoce ENTER_NEAREST_BUILDING, crear la orden estructurada;
+5. no enviar cada grito al LLM;
+6. no parsear el message log.
+
+Extender el sistema de sonidos para transportar utterance, speaker e intención sería más general, pero más invasivo. No lo usaría como primer paso.
+
+======================================================================
+G. UI
+======================================================================
+
+47. ORIGEN DE “HABLANDO CON TODOS...”
+
+Lo genera:
+
+npc_ai::ai_talking_status_line()
+
+en src/npctalk.cpp.
+
+game::ai_talk() lo añade después de que al menos una request grupal haya sido aceptada.
+
+El mensaje del jugador es independiente y se añade antes mediante:
+
+npc_ai::log_ai_player_speech()
+
+48. ELIMINACIÓN INDEPENDIENTE
+
+Sí. Puede eliminarse únicamente el add_msg() del branch grupal sin afectar:
+
+- Dices al grupo: "...";
+- requests por NPC;
+- respuestas de Liam/Kim;
+- message log;
+- conversación individual;
+- status “Hablando con Liam...”;
+- FOLLOW/GUARD.
+
+======================================================================
+H. DISEÑO RECOMENDADO
+======================================================================
+
+49. PROPUESTA A — MÍNIMA INVASIÓN
+
+Cambios pequeños sobre la arquitectura actual.
+
+Componentes:
+
+1. Mantener combat_perception_snapshot, prompts, memoria, deduplicación y queue.
+2. Añadir eventos faltantes:
+   - NPC_GRABBED
+   - FAILED_ESCAPE
+   - DRAGGED
+   - ALLY_DRAGGED
+   - GRAB_BROKEN
+3. Producirlos desde do_grab() y try_remove_grab().
+4. Añadir una pequeña bandeja de candidatos por NPC.
+5. Conservar el mejor evento pendiente si el speaker/queue está ocupado.
+6. Coalescer secuencias relacionadas:
+   - grab;
+   - escape fallido;
+   - arrastre;
+   - aliado golpea al agresor.
+7. Cambiar el cooldown de speaker a protección secundaria:
+   - misma clave/evento: throttle fuerte;
+   - evento urgente realmente distinto: puede entrar;
+   - eventos ordinarios repetidos: se acumulan/resumen.
+8. Añadir conversation_turn_id a AI_TALK.
+9. Crear un FIFO directo acotado por NPC para que la segunda pregunta no se pierda.
+10. Instrumentar latencia antes de considerar más workers.
+11. Corregir POT/PO/MO y build de traducción.
+12. Extraer helper vanilla para Q.
+13. Implementar después ENTER_NEAREST_REACHABLE_INTERIOR.
+
+Ventajas:
+
+- reutiliza casi todo;
+- bajo riesgo sobre tactical AI;
+- mantiene un worker;
+- no introduce otro sistema de memoria persistente;
+- fácil de probar deterministicamente.
+
+Desventajas:
+
+- Combat Social y spontaneous seguirían siendo dos schedulers separados;
+- event bus y hooks directos quedarían algo repartidos;
+- el modelo de prioridades seguiría limitado a tres niveles.
+
+Riesgo: medio.
+
+Rendimiento: bajo impacto si la bandeja es pequeña y las rutas se calculan solo al ejecutar una orden.
+
+Archivos probables:
+
+- npc_ai_combat_social.cpp/.h
+- npc_ai_async.cpp/.h
+- npc_ai_spontaneous.cpp
+- npc_ai_context.cpp
+- npctalk.cpp/.h
+- mattack_actors.cpp
+- character_escape.cpp
+- action.cpp/.h
+- handle_action.cpp
+- data/raw/keybindings.json
+- traducciones y configuración MSBuild
+- tests AI correspondientes
+
+Complejidad aproximada: media, divisible en cambios pequeños.
+
+50. PROPUESTA B — ARQUITECTURA IDEAL
+
+Crear un npc_ai_event_stream estructurado, pero integrado con el sistema actual, no una IA paralela.
+
+event_bus + hooks físicos precisos
+        |
+        v
+npc_ai_event_stream (ring RAM)
+        |
+        v
+relevancia/percepción por NPC
+        |
+        v
+candidate aggregator
+        |
+        v
+situation packet/coalescing
+        |
+        v
+scheduler por lanes
+        |
+        v
+queue async actual evolucionada
+        |
+        v
+completion validator
+        |
+        v
+npc::say / acciones C++ deterministas
+
+Un evento tendría:
+
+- sequence ID;
+- turn;
+- encounter;
+- event type;
+- actor ref;
+- target ref;
+- posición;
+- importancia;
+- resultado confirmado;
+- visibility/audibility metadata;
+- current-state validation predicate.
+
+Lanes:
+
+1. player direct/group;
+2. immediate danger;
+3. urgent combat;
+4. ordinary combat;
+5. NPC->NPC;
+6. ambient.
+
+La queue mantendría un worker inicialmente, pero con:
+
+- prioridad;
+- orden conversacional por NPC;
+- turn IDs;
+- cancelación lógica;
+- candidate replacement;
+- métricas.
+
+Ventajas:
+
+- secuencias narrativas coherentes;
+- menos pérdida de eventos;
+- mejor separación entre historia y verdad actual;
+- reusable para futura autonomía;
+- facilita JSONL y debugging;
+- permite event-driven real sin spam.
+
+Desventajas:
+
+- más archivos/abstracciones;
+- migración más extensa;
+- necesita resolver bien referencias efímeras a monstruos;
+- mayor esfuerzo de tests;
+- riesgo de duplicar event bus si se diseña mal.
+
+Riesgo: medio-alto.
+
+Rendimiento: bueno si el ring y filtros son baratos; malo si cada evento dispara percepción completa para todos los NPC.
+
+Archivos probables:
+
+- nuevo npc_ai_events.cpp/.h
+- Combat Social/async/context/spontaneous
+- hooks físicos puntuales
+- session lifecycle
+- tests
+- opción/debug sink JSONL
+
+Complejidad aproximada: alta, pero más mantenible a largo plazo.
+
+51. QUÉ IMPLEMENTARÍA PRIMERO
+
+Primero instrumentación y traducciones.
+
+Sin tiempos medidos, cambiar workers sería especulativo. Sin arreglar MO, seguiremos atribuyendo al LLM textos ingleses que realmente vienen de snippets.
+
+Después implementaría la secuencia grab/escape/drag porque es el caso de reactividad más claro y verificable.
+
+52. QUÉ NO IMPLEMENTARÍA
+
+No implementaría:
+
+- lectura del message log textual por el LLM;
+- dependencia de un archivo JSONL;
+- una request por cada golpe;
+- embeddings/vector DB;
+- múltiples workers sin benchmark;
+- traducción post-hoc por cientos de if;
+- parsing LLM de cada grito;
+- “casa” basada exclusivamente en overmap terrain;
+- teletransporte o pathfinding alternativo;
+- modificación de stamina;
+- reescritura de personality/memory/perception;
+- reemplazo de la queue actual.
+
+53. ORDEN RECOMENDADO DE TRABAJO
+
+1. Instrumentación completa de latencia y queue.
+2. Reparar pipeline POT -> PO -> MO para MSBuild.
+3. Pruebas de idioma para snippets y C++ custom.
+4. conversation_turn_id y FIFO directo por NPC.
+5. Eliminar solo “Hablando con todos...”.
+6. Añadir eventos estructurados de grab/failed escape/drag/break.
+7. Añadir bandeja de candidatos/coalescing.
+8. Convertir el cooldown general en protección principalmente por evento.
+9. Ampliar eventos de ataque/esquiva/golpe significativo mediante event bus.
+10. Evaluar con telemetría si un segundo worker aporta algo.
+11. Extraer helper vanilla y añadir Q en DEFAULTMODE.
+12. Implementar ENTER_NEAREST_REACHABLE_INTERIOR.
+13. Añadir reconocimiento determinista opcional desde gritos.
+14. Considerar después la arquitectura central de eventos si los hooks empiezan a multiplicarse.
+
+No se tocó stamina ni ningún otro sistema durante la auditoría. No hubo modificaciones, compilaciones, tests ni commit.

@@ -114,6 +114,16 @@ struct weather_sum {
     int wind_amount = 0;
 };
 bool is_creature_outside( const Creature &target );
+// CDDA-AI STABLE 0.I SKY VISIBILITY COMPAT
+//
+// Stable 0.I does not yet expose can_creature_see_sky().
+// For this branch, outdoor status is the closest native
+// equivalent available for sky/moon awareness.
+inline bool can_creature_see_sky( const Creature &target )
+{
+    return is_creature_outside( target );
+}
+
 void wet_character( Character &target, int amount );
 weather_type_id get_bad_weather();
 std::string get_shortdirstring( int angle );

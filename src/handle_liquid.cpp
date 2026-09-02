@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <fstream>
 #include <functional>
 #include <iterator>
 #include <list>
@@ -14,6 +15,7 @@
 #include "action.h"
 #include "activity_actor_definitions.h"
 #include "cached_options.h"
+#include "calendar.h"
 #include "cata_utility.h"
 #include "character.h"
 #include "color.h"
@@ -31,6 +33,7 @@
 #include "map_selector.h"
 #include "messages.h"
 #include "monster.h"
+#include "path_info.h"
 #include "player_activity.h"
 #include "string_formatter.h"
 #include "translations.h"
@@ -477,17 +480,43 @@ static bool handle_keg_or_ground_target( Character &player_character, item &liqu
     return true;
 }
 
+static void leftover_pour_log( const std::string &line )
+{
+    const std::string path = PATH_INFO::user_dir() + "cdda_leftover_liquid.txt";
+    std::ofstream out( path, std::ios::app | std::ios::binary );
+    if( !out ) {
+        return;
+    }
+    out << "turn=" << to_turn<int>( calendar::turn ) << " | " << line << "\n";
+}
+
 static bool handle_item_target( Character &player_character, item &liquid, liquid_dest_opt &target,
                                 const std::function<bool()> &create_activity, bool silent )
 {
     // Currently activities can only store item position in the players inventory,
     // not on ground or similar. TODO: implement storing arbitrary container locations.
     if( target.item_loc && create_activity() ) {
+        leftover_pour_log( string_format(
+                               "POUR activity liquid='%s' charges=%d container='%s'",
+                               liquid.display_name(), liquid.charges,
+                               target.item_loc->tname() ) );
         serialize_liquid_target( player_character.activity, target.item_loc );
-    } else if( player_character.pour_into( target.item_loc, liquid, true, silent ) ) {
+        return true;
+    }
+    const int before = liquid.charges;
+    const bool poured = player_character.pour_into( target.item_loc, liquid, true, silent );
+    leftover_pour_log( string_format(
+                           "POUR immediate poured=%d liquid='%s' charges %d -> %d container='%s' err_path=%s",
+                           poured ? 1 : 0, liquid.display_name(), before, liquid.charges,
+                           target.item_loc ? target.item_loc->tname() : "-",
+                           target.item_loc ? "item" : "null" ) );
+    if( poured ) {
         target.item_loc.make_active();
         player_character.mod_moves( -100 );
     }
+    // Vanilla always returned true here even when pour_into failed.  Keep that
+    // contract so the leftover monitor can record the hang; the pocket loop
+    // aborts if charges do not decrease.
     return true;
 }
 

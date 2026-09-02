@@ -63,6 +63,7 @@
 #include "monster.h"
 #include "mtype.h"
 #include "npc.h"
+#include "npc_ai_event_stream.h"
 #include "options.h"
 #include "output.h"
 #include "panels.h"
@@ -712,6 +713,9 @@ bool Character::handle_gun_damage( item &it )
             _( "Your %s misfires with a muffled click!" ),
             _( "<npcname>'s %s misfires with a muffled click!" ),
             it.tname() );
+        npc_ai::record_creature_world_event( npc_ai::world_event_type::weapon_jammed,
+                this, nullptr, 92, "Character::handle_gun_damage",
+                disp_name() + " sufrio un fallo de " + it.tname() + "." );
         // at high dirt levels the chance to misfire gets to significant levels. 10,000 is max and 7800 is quite high so above that the player gets some relief in the form of exchanging time for some dirt reduction. Basically jiggling the parts loose to remove some dirt and get a few more shots out.
         if( dirt_dbl >
             7800 ) {
@@ -783,6 +787,9 @@ bool Character::handle_gun_damage( item &it )
         add_msg_player_or_npc( _( "Your %s misfires with a wet click!" ),
                                _( "<npcname>'s %s misfires with a wet click!" ),
                                it.tname() );
+        npc_ai::record_creature_world_event( npc_ai::world_event_type::weapon_jammed,
+                this, nullptr, 92, "Character::handle_gun_damage",
+                disp_name() + " sufrio un fallo de " + it.tname() + "." );
         return false;
         // Here we check for a chance for the weapon to suffer a mechanical malfunction.
         // Note that some weapons never jam up 'NEVER_JAMS' and thus are immune to this
@@ -793,6 +800,9 @@ bool Character::handle_gun_damage( item &it )
         add_msg_player_or_npc( _( "Your %s malfunctions!" ),
                                _( "<npcname>'s %s malfunctions!" ),
                                it.tname() );
+        npc_ai::record_creature_world_event( npc_ai::world_event_type::weapon_jammed,
+                this, nullptr, 92, "Character::handle_gun_damage",
+                disp_name() + " sufrio un fallo de " + it.tname() + "." );
         return false;
 
         // Chance for the weapon to suffer a failure, caused by the magazine size, quality, or condition
@@ -802,6 +812,9 @@ bool Character::handle_gun_damage( item &it )
                                _( "<npcname>'s %s malfunctions!" ),
                                it.tname() );
         it.set_random_fault_of_type( gun_mechanical_simple );
+        npc_ai::record_creature_world_event( npc_ai::world_event_type::weapon_jammed,
+                this, nullptr, 92, "Character::handle_gun_damage",
+                disp_name() + " sufrio un atasco de " + it.tname() + "." );
         return false;
 
         // Here we check for a chance for attached mods to get damaged if they are flagged as 'CONSUMABLE'.

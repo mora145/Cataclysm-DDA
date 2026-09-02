@@ -1940,7 +1940,8 @@ int npc::indoor_voice() const
     Character &player = get_player_character();
     const int distance_to_player = rl_dist( pos_abs(), player.pos_abs() );
     if( is_following() || is_ally( player ) ) {
-        wanted_volume = distance_to_player;
+        // CDDA-AI: ensure follower speech remains audible at the player position.
+        wanted_volume = distance_to_player + 1;
     } else if( is_enemy() && sees( here, player.pos_bub( here ) ) ) {
         // Battle cry! Bandits have no concept of indoor voice, even when not threatened.
         wanted_volume = max_volume;
@@ -3124,6 +3125,21 @@ const std::vector<weak_ptr_fast<Creature>> &npc::get_cached_friends() const
     return ai_cache.friends;
 }
 
+const std::vector<weak_ptr_fast<Creature>> &npc::get_cached_hostiles() const
+{
+    return ai_cache.hostile_guys;
+}
+
+const std::vector<weak_ptr_fast<Creature>> &npc::get_cached_neutrals() const
+{
+    return ai_cache.neutral_guys;
+}
+
+const std::vector<dangerous_sound> &npc::get_cached_dangerous_sounds() const
+{
+    return ai_cache.sound_alerts;
+}
+
 std::string npc_attitude_name( npc_attitude att )
 {
     switch( att ) {
@@ -3355,12 +3371,6 @@ void npc::process_turn()
 {
     Character::process_turn();
 
-    // NPCs shouldn't be using stamina, but if they have, set it back to max
-    // If the stamina is higher than the max (Languorous), set it back to max
-    if( calendar::once_every( 1_minutes ) && get_stamina() != get_stamina_max() ) {
-        set_stamina( get_stamina_max() );
-    }
-
     if( is_player_ally() && calendar::once_every( 1_hours ) &&
         get_hunger() < 200 && get_thirst() < 100 && op_of_u.trust < 5 ) {
         // Friends who are well fed will like you more
@@ -3478,6 +3488,7 @@ const pathfinding_settings &npc::get_pathfinding_settings( bool no_bashing ) con
         // Climbing at this dexterity will always fail
         path_settings->climb_cost = 0;
     }
+    path_settings->allow_vertical_climbing = true;
 
     return *path_settings;
 }
