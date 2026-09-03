@@ -491,8 +491,13 @@ std::string build_context_for_intent( const npc &who, const std::string &player_
                    npc_ai::build_recent_speech_context( who, 4 ) +
                    npc_ai::build_sensory_context( who, false );
         case npc_ai::context_intent::npc_social:
+            // Live scenario run 2026-09-03: Sarah, herself grabbed, replied to
+            // "Sarah esta atrapada" with "¿donde estas atrapada?".  A reply
+            // needs the speaker's own physical state, not only the scene.
             return npc_ai::build_memory_context( who, 4 ) +
                    npc_ai::build_recent_speech_context( who, 4 ) +
+                   npc_ai::render_self_snapshot( npc_ai::build_self_snapshot(
+                           who, npc_ai::self_snapshot_scope::physical_state ) ) +
                    npc_ai::build_sensory_context( who, false );
         case npc_ai::context_intent::general:
             return npc_ai::build_recent_speech_context( who, 4 );
@@ -1098,6 +1103,9 @@ std::string build_npc_prompt( const npc &who, const std::string &player_line,
            << "Aliado del jugador: " << ( who.is_player_ally() ? "si" : "no" )
            << "\n"
            << "Objeto o arma empunada: " << wielded_name << "\n"
+           // Live scenario run 2026-09-03: with only this header routed, the
+           // model invented where the bat came from.  State the gap outright.
+           << "Origen de tus objetos: desconocido (no inventes donde los conseguiste)\n"
            << "Relacion con jugador: confianza=" << who.op_of_u.trust
            << "; miedo=" << who.op_of_u.fear << "; valor=" << who.op_of_u.value
            << "; ira=" << who.op_of_u.anger << "\n\n";

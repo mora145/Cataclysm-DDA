@@ -480,6 +480,50 @@ TEST_CASE( "npc_ai_live_scenarios_against_remote_provider", "[.npc_ai_live_scena
         npc_ai::set_combat_social_batching_for_test( false );
     }
 
+    {
+        scenario_record &rec = begin_scenario( "Combat Social por lotes con golpes reales",
+                                               "Batching activado; un zombi adyacente golpea a Liam con acierto forzado, Liam lo mata a golpes; Kim lo ve todo.",
+                                               "(hechos del Event Stream: golpes recibidos, muerte confirmada)",
+                                               "Lote JSON {candidates:[{slot,event_ids,claim_level,text}]} o DECISION/TEXT; solo hechos reales, sin prometer acciones." );
+        npc_ai::set_combat_social_batching_for_test( true );
+        npc &liam = spawn_follower( point::east, "Liam" );
+        npc &kim = spawn_follower( point::south, "Kim" );
+        const tripoint_bub_ms origin = liam.pos_bub( get_map() );
+        monster &zombie = spawn_test_monster( "mon_zombie", origin + tripoint_rel_ms{ 1, 0, 0 } );
+        refresh_visibility( liam );
+        refresh_visibility( kim );
+        liam.regen_ai_cache();
+        kim.regen_ai_cache();
+        // Baseline snapshot so the later facts register as transitions.
+        npc_ai::process_combat_social( liam );
+        npc_ai::process_combat_social( kim );
+        calendar::turn += 2_turns;
+        int landed = 0;
+        for( int i = 0; i < 3; ++i ) {
+            landed += zombie.melee_attack( liam, 10000.0f ) ? 1 : 0;
+        }
+        int swings = 0;
+        while( !zombie.is_dead() && swings < 40 ) {
+            liam.set_moves( 1000 );
+            liam.melee_attack( zombie, false );
+            ++swings;
+        }
+        calendar::turn += 1_turns;
+        refresh_visibility( liam );
+        refresh_visibility( kim );
+        liam.regen_ai_cache();
+        kim.regen_ai_cache();
+        const npc_ai::combat_social_process_result first = npc_ai::process_combat_social( liam );
+        const npc_ai::combat_social_process_result second = npc_ai::process_combat_social( kim );
+        rec.outcome = "zombie hits landed=" + std::to_string( landed ) + ", liam swings=" +
+                      std::to_string( swings ) + ", zombie dead=" + ( zombie.is_dead() ? "yes" : "no" ) +
+                      ", liam hp=" + std::to_string( liam.get_hp() ) + "/" + std::to_string( liam.get_hp_max() ) +
+                      ", liam queued=" + ( first.request_queued ? npc_ai::combat_social_event_name( first.event.type ) : "no" ) +
+                      ", kim queued=" + ( second.request_queued ? npc_ai::combat_social_event_name( second.event.type ) : "no" );
+        settle_and_collect( rec );
+        npc_ai::set_combat_social_batching_for_test( false );
+    }
+
     // ------------------------------------------------------------ spontaneous
     {
         scenario_record &rec = begin_scenario( "Habla espontanea por dolor",

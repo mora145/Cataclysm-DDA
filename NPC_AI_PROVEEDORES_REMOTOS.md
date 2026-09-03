@@ -140,12 +140,25 @@ Gate `[npc_ai] --rng-seed 1`: 209 casos / 4228 aserciones, sin regresión.
 Latencia media de DeepInfra: 8,7 s en la primera pasada (picos de 33 s) y
 0,8 s en la segunda; varía con la hora, no con el tamaño del prompt.
 
-Sigue abierto: el modelo remata con "estoy bien" aunque acabe de describir
-una herida grave; el origen inventado de un objeto ("lo encontré en un
-garaje") persiste cuando la pregunta solo enruta la cabecera; una réplica NPC
-a NPC incoherente (Sarah, agarrada, preguntó "¿dónde estás atrapada?"); una
-promesa táctica ("¡voy a cubrirte!") pasó el filtro; y el modo por lotes de
-Combat Social no se activa con un simple avistamiento.
+Tercera pasada, tras cuatro ajustes más:
+
+| Cambio | Archivo | Resultado en vivo |
+|---|---|---|
+| Prohibición explícita de "estoy bien", "no es nada", "puedo cuidarme solo" con una parte grave, también al final de la respuesta | `npc_ai_self.cpp` | Brazo grave: "Mi brazo derecho está gravemente herido. Necesito ayuda para moverme." Kim: "sangra bastante. Necesito ayuda para detenerlo." |
+| Cabecera: "Origen de tus objetos: desconocido (no inventes donde los conseguiste)" | `npc_ai_context.cpp` | "Lo encontré en un garaje abandonado" pasó a "Lo encontré por ahí" |
+| La ruta NPC_SOCIAL incluye el estado físico del que replica | `npc_ai_context.cpp` | Sarah agarrada ya no pregunta "¿dónde estás atrapada?"; dice "¿Qué? ¿Dónde?" (aún flojo) |
+| Filtro de promesas tácticas ampliado: "voy a cubrir", "cubrirte", "te cubrire", "voy a por", "dejamelo", "leave it to me"... | `npc_ai_combat_social.cpp` | "Tengo una ballesta, puedo cubrirte" fue filtrado y no se dijo |
+| Escenario nuevo: zombi adyacente golpea a Liam tres veces, Liam lo mata, Kim observa, batching activo | `npc_ai_live_scenarios_test.cpp` | **El lote JSON se activó**: cuatro candidatas con `slot`, `event_ids` reales y `claim_level=FACT_ONLY`; el Social Director dejó pasar una, "El zombi está muerto." |
+
+Resultado: 21 escenarios, 27 llamadas, 0 incorrectos, latencia media 1,1 s.
+Gate `[npc_ai]` sin cambios: 209 / 4228.
+
+Queda abierto, de menor gravedad: en el lote JSON dos candidatas describieron
+fallos de melé como "tiro" y "disparo" (no se pronunciaron, pero el hecho no
+lleva modo de ataque explícito); Liam replicó "¡Apunta bien!" a Kim, que no
+disparó; con la pregunta enrutada solo a salud Liam dijo "no veo a los demás"
+teniendo a Kim al lado; y "me duele mucho" con dolor 0 al hablar de la pierna
+rota. Son cuestiones de grado, no de hechos falsos graves.
 
 ## Pendiente
 

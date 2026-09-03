@@ -2275,9 +2275,15 @@ std::string combat_social_intent_name( const combat_social_event_type type )
 
 bool combat_social_text_has_unconfirmed_tactical_promise( const std::string &text )
 {
-    static constexpr std::array<std::string_view, 10> promises = {
-        "te cubro", "yo me encargo", "voy a distraer", "voy por el", "quedate ahi",
-        "i'll cover", "i will cover", "i'll handle", "i'm going after", "i'll distract"
+    // Live scenario run 2026-09-03: "¡Voy a cubrirte!" passed while "te
+    // cubro" was filtered.  Cover the common Spanish conjugations and the
+    // "voy a por" variant the handoff already flagged as leaking.
+    static constexpr std::array<std::string_view, 24> promises = {
+        "te cubro", "yo me encargo", "me encargo yo", "voy a distraer", "voy por el",
+        "voy a por", "quedate ahi", "voy a cubrir", "te cubrire", "cubrirte", "os cubro",
+        "los cubro", "yo lo distraigo", "dejamelo a mi", "dejamelo", "yo voy por",
+        "i'll cover", "i will cover", "i'll handle", "i'm going after", "i'll distract",
+        "leave it to me", "i've got this", "i got him"
     };
     return std::any_of( promises.begin(), promises.end(), [&]( const std::string_view promise ) {
         return lcmatch( text, promise );
