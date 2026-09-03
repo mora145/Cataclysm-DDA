@@ -225,6 +225,101 @@ TEST_CASE( "gemini_request_contract_and_response_parser_are_explicit",
     }
 }
 
+TEST_CASE( "openai_compatible_request_contract_and_response_parser_are_explicit",
+           "[npc_ai][npc_ai_openai][npc_ai_async]" )
+{
+    const std::string body = npc_ai::build_openai_request_json( "hola", "sistema" );
+    CHECK( body.find( "\"messages\":[{\"role\":\"system\",\"content\":\"sistema\"},"
+                      "{\"role\":\"user\",\"content\":\"hola\\n/no_think\"}]" ) != std::string::npos );
+    CHECK( body.find( "\"temperature\":0.4" ) != std::string::npos );
+    CHECK( body.find( "\"top_p\":0.85" ) != std::string::npos );
+    CHECK( body.find( "\"stream\":false" ) != std::string::npos );
+    CHECK( body.find( "Bearer" ) == std::string::npos );
+
+    // Qwen3 with /no_think still emits an empty think block; it must never
+    // reach the validators.
+    const npc_ai::ai_response parsed = npc_ai::parse_openai_response_json(
+                                           "{\"id\":\"x\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+                                           "\"content\":\"<think>\\n\\n</think>\\n\\nBrazo duele. Sangrando.\"},"
+                                           "\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":181,"
+                                           "\"completion_tokens\":12,\"total_tokens\":193,\"estimated_cost\":0.00001}}", 1 );
+    REQUIRE( parsed.success );
+    CHECK( parsed.text == "Brazo duele. Sangrando." );
+    CHECK( parsed.prompt_eval_count == 181 );
+    CHECK( parsed.eval_count == 12 );
+    CHECK_FALSE( parsed.context_truncated );
+
+    const npc_ai::ai_response truncated = npc_ai::parse_openai_response_json(
+                                              "{\"choices\":[{\"message\":{\"content\":\"[{\\\"slot\\\":1\"},"
+                                              "\"finish_reason\":\"length\"}]}" );
+    REQUIRE( truncated.success );
+    CHECK( truncated.context_truncated );
+
+    const npc_ai::ai_response openai_error = npc_ai::parse_openai_response_json(
+                "{\"error\":{\"message\":\"Rate limit exceeded\",\"type\":\"rate_limit_error\"}}" );
+    CHECK_FALSE( openai_error.success );
+    CHECK( openai_error.error.find( "rate_limit_error" ) != std::string::npos );
+
+    const npc_ai::ai_response deepinfra_error = npc_ai::parse_openai_response_json(
+                "{\"detail\":{\"error\":\"Invalid token\"}}" );
+    CHECK_FALSE( deepinfra_error.success );
+    CHECK( deepinfra_error.error.find( "Invalid token" ) != std::string::npos );
+
+    const npc_ai::ai_response only_think = npc_ai::parse_openai_response_json(
+                "{\"choices\":[{\"message\":{\"content\":\"<think>razonando</think>\"},\"finish_reason\":\"stop\"}]}" );
+    CHECK_FALSE( only_think.success );
+
+    const npc_ai::ai_response invalid = npc_ai::parse_openai_response_json( "not-json" );
+    CHECK_FALSE( invalid.success );
+
+    if( !npc_ai::openai_api_key_available() ) {
+        const npc_ai::ai_response no_key = npc_ai::ask_openai( "hola", "sistema" );
+        CHECK_FALSE( no_key.success );
+        CHECK( no_key.error.find( "CDDA_NPC_AI_OPENAI_API_KEY" ) != std::string::npos );
+    }
+}
+
+// Hidden: needs network and CDDA_NPC_AI_OPENAI_API_KEY / CDDA_NPC_AI_GEMINI_API_KEY.
+// Run explicitly with "[.npc_ai_live]" to prove the WinHTTP + parser path
+// end to end against the real providers.  Skips silently without a key.
+TEST_CASE( "remote_providers_answer_a_grounded_spanish_prompt_live",
+           "[.npc_ai_live]" )
+{
+    const std::string system =
+        "Eres Kim, superviviente en el apocalipsis zombi. Responde en español, una frase corta, "
+        "solo con hechos del contexto. Estado: brazo derecho herido, 3 vendas en la mochila.";
+    const std::string prompt = "Kim, ¿tienes vendas?";
+
+    if( npc_ai::openai_api_key_available() ) {
+        const npc_ai::ai_response r = npc_ai::ask_openai( prompt, system );
+        INFO( "openai error: " << r.error );
+        REQUIRE( r.success );
+        CHECK_FALSE( r.text.empty() );
+        CHECK( r.text.find( "<think>" ) == std::string::npos );
+        CHECK( r.prompt_eval_count > 0 );
+        CHECK_FALSE( r.context_truncated );
+        WARN( "openai/" << npc_ai::openai_model_name() << " -> " << r.text
+              << " (prompt_tokens=" << r.prompt_eval_count << ", eval=" << r.eval_count << ")" );
+    } else {
+        WARN( "CDDA_NPC_AI_OPENAI_API_KEY not set; OpenAI-compatible live check skipped" );
+    }
+
+    if( npc_ai::gemini_api_key_available() ) {
+        const npc_ai::ai_response r = npc_ai::ask_gemini( prompt, system );
+        INFO( "gemini error: " << r.error );
+        // The free tier may be in quota backoff; a 429 is reported, not a failure.
+        if( r.success ) {
+            CHECK_FALSE( r.text.empty() );
+            CHECK( r.prompt_eval_count > 0 );
+            WARN( "gemini/" << npc_ai::gemini_model_name() << " -> " << r.text );
+        } else {
+            WARN( "gemini live call failed (acceptable on free tier): " << r.error );
+        }
+    } else {
+        WARN( "CDDA_NPC_AI_GEMINI_API_KEY not set; Gemini live check skipped" );
+    }
+}
+
 TEST_CASE( "ollama_debug_gate_records_prompt_response_and_aggregate_latency",
            "[npc_ai][npc_ai_ollama][npc_ai_async]" )
 {

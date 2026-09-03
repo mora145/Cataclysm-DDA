@@ -45,8 +45,33 @@ ai_response ask_ollama( const std::string &prompt,
 // and CDDA_NPC_AI_GEMINI_MAX_TOKENS (default 256).
 enum class llm_provider : int {
     ollama,
-    gemini
+    gemini,
+    // Any OpenAI-compatible chat completions endpoint.  Defaults target
+    // DeepInfra with Qwen/Qwen3-14B, the same model the local Ollama profile
+    // uses, so prompts and validators need no recalibration.
+    // CDDA_NPC_AI_PROVIDER=openai (alias: deepinfra)
+    // CDDA_NPC_AI_OPENAI_API_KEY   bearer token (required)
+    // CDDA_NPC_AI_OPENAI_HOST      default api.deepinfra.com
+    // CDDA_NPC_AI_OPENAI_PATH      default /v1/openai/chat/completions
+    // CDDA_NPC_AI_OPENAI_MODEL     default Qwen/Qwen3-14B
+    // CDDA_NPC_AI_OPENAI_MAX_TOKENS default 192 (matches Ollama num_predict)
+    // CDDA_NPC_AI_OPENAI_EXTRA_JSON optional raw JSON members appended to the
+    //                              request body, e.g. provider-specific knobs.
+    openai
 };
+
+std::string openai_model_name();
+std::string openai_host();
+std::string openai_path();
+int openai_max_output_tokens();
+bool openai_api_key_available();
+std::string openai_request_parameters_summary();
+std::string build_openai_request_json( const std::string &prompt,
+                                       const std::string &system_prompt );
+ai_response parse_openai_response_json( const std::string &response_body,
+                                        std::int64_t http_completed_ms = 0 );
+ai_response ask_openai( const std::string &prompt,
+                        const std::string &system_prompt );
 
 llm_provider active_llm_provider();
 const char *active_llm_provider_name();

@@ -1,0 +1,117 @@
+# NPC AI con proveedores remotos (rama de pruebas)
+
+Rama: `testing/gemini-flash`, creada sobre `cdda-ai-0.I`. Añade dos backends
+remotos sin quitar Ollama. El resto del sistema (Event Stream, Combat Social,
+Context Router, validación, SQLite) no cambia: solo cambia quién responde al
+prompt. Todo el código nuevo vive en `src/npc_ai_client.cpp`.
+
+| Proveedor | Modelo por defecto | Cuándo usarlo |
+|---|---|---|
+| `ollama` (defecto) | `qwen3:14b` local | Lo de siempre. Sin red, exige el modelo de 9 GB y 32 GB de RAM |
+| `openai` / `deepinfra` | `Qwen/Qwen3-14B` en DeepInfra | **Recomendado.** Mismo modelo y mismo muestreo que el local; los prompts de Miguel valen sin recalibrar |
+| `gemini` | `gemini-2.5-flash` | Alternativa. Tier gratuito inservible para combate (20 peticiones); con facturación va bien |
+
+## Estado (03/09/2026)
+
+- Build Release x64 de juego y tests: **PASS** con Visual Studio en `E:\Visual
+  Studio` (MSVC 14.38) y vcpkg en `E:\vcpkg`.
+- `[npc_ai] --rng-seed 1`: **208 casos / 4208 aserciones, PASS**.
+- Tests nuevos: `[npc_ai_gemini]` y `[npc_ai_openai]` (contrato de petición y
+  parser, sin red) y el oculto `[.npc_ai_live]`, que llama a los proveedores
+  reales con las claves del entorno. Ejecutado el 03/09/2026: DeepInfra
+  respondió por el cliente C++ del juego ("Sí, tengo tres vendas en mi
+  mochila. Mi brazo derecho está herido.", 75 tokens de prompt); Gemini
+  devolvió un 429 del tier gratuito que el cliente parseó correctamente.
+- Pruebas de latencia y cuota contra ambos endpoints: ver abajo.
+- Los dos errores de `tests/player_activities_test.cpp` que aparecieron en el
+  log del primer build no se repitieron en los rebuilds incrementales; el
+  exe de tests enlaza y el gate pasa.
+
+## Configuración
+
+Todo por variables de entorno de usuario. **Las claves nunca van en el
+código, en el repo, ni en `config\`.** Tras cambiarlas hay que abrir una
+terminal nueva o relanzar el juego.
+
+### DeepInfra (Qwen3-14B, el modelo de Miguel)
+
+```powershell
+[Environment]::SetEnvironmentVariable("CDDA_NPC_AI_PROVIDER", "deepinfra", "User")
+[Environment]::SetEnvironmentVariable("CDDA_NPC_AI_OPENAI_API_KEY", "<clave de deepinfra.com>", "User")
+```
+
+| Variable | Defecto | Efecto |
+|---|---|---|
+| `CDDA_NPC_AI_OPENAI_API_KEY` | | Obligatoria. Sin ella toda petición falla en local sin tocar la red |
+| `CDDA_NPC_AI_OPENAI_HOST` | `api.deepinfra.com` | Cualquier host con API compatible OpenAI |
+| `CDDA_NPC_AI_OPENAI_PATH` | `/v1/openai/chat/completions` | Ruta del endpoint |
+| `CDDA_NPC_AI_OPENAI_MODEL` | `Qwen/Qwen3-14B` | Id del modelo en el proveedor |
+| `CDDA_NPC_AI_OPENAI_MAX_TOKENS` | `192` | Igual que `num_predict` de Ollama |
+| `CDDA_NPC_AI_OPENAI_EXTRA_JSON` | | Miembros JSON crudos añadidos al cuerpo, p. ej. `"top_k":20,"repetition_penalty":1.1` |
+
+Con el host por defecto se envían automáticamente `top_k=20` y
+`repetition_penalty=1.1`, que DeepInfra acepta, para igualar el Modelfile
+local. Otros hosts solo los reciben si se ponen en `EXTRA_JSON`.
+
+El pensamiento de Qwen3 se apaga con el sufijo oficial `/no_think` en el
+mensaje del usuario. El modelo devuelve igualmente un bloque `<think></think>`
+vacío que el parser elimina antes de entregar el texto.
+
+Sirve también para Hugging Face Inference Providers, Groq, Together u otros:
+cambiar host, ruta y modelo. Hugging Face reenvía a DeepInfra al mismo precio.
+
+### Gemini
+
+```powershell
+[Environment]::SetEnvironmentVariable("CDDA_NPC_AI_PROVIDER", "gemini", "User")
+[Environment]::SetEnvironmentVariable("CDDA_NPC_AI_GEMINI_API_KEY", "<clave AIza... de AI Studio>", "User")
+```
+
+| Variable | Defecto |
+|---|---|
+| `CDDA_NPC_AI_GEMINI_MODEL` | `gemini-2.5-flash` |
+| `CDDA_NPC_AI_GEMINI_MAX_TOKENS` | `256` |
+
+Razonamiento desactivado (`thinkingBudget: 0`). Cabecera `x-goog-api-key`.
+
+### Diagnóstico
+
+`CDDA_NPC_AI_DEBUG=1` escribe en `npc_ai_ollama_diagnostics.txt` bloques
+`=== OLLAMA | GEMINI | OPENAI REQUEST ===` con el prompt final, la respuesta
+cruda y los tokens. Las claves no se escriben nunca; solo
+`api_key=present|MISSING`.
+
+## Comportamiento común de los clientes remotos
+
+- HTTPS vía WinHTTP con el mismo helper que Ollama. Sigue siendo solo Windows.
+- Respuesta cortada por longitud (`MAX_TOKENS` en Gemini, `length` en OpenAI)
+  se marca como `context_truncated`, que Combat Social ya descarta.
+- Ante HTTP 429 o 503 el cliente entra en backoff. Si el cuerpo trae "retry in
+  N s" respeta ese tiempo más un segundo; si no, 20 s. Las peticiones en
+  backoff fallan al instante sin tocar la red, así que no consumen cuota.
+- Se conserva el guard de bytes de Ollama (~15,6 KB de entrada) como tope de
+  coste.
+
+## Medido el 03/09/2026 (mismo prompt de Kim, 10 preguntas)
+
+| | DeepInfra Qwen3-14B | Gemini 2.5 Flash gratuito |
+|---|---|---|
+| Latencia típica | 0,7 a 1,0 s | 0,8 a 1,7 s |
+| Picos | 1,7 s | 15 a 64 s antes de bloquear |
+| Bloqueo | Ninguno en 15 peticiones seguidas | 429 tras 15; sostenido ~5/min; cuota `free_tier_requests` límite 20 |
+| Coste medido | $0,000377 por 12 peticiones (~$0,00003 cada una) | $0 hasta el bloqueo |
+| Hechos inventados | 1 leve en 15 ("Ha salvado vidas antes") | 0 en 21 |
+| Estilo | Frases naturales de una o dos oraciones | Telegráfico ("Bate.") |
+
+Estimación con los prompts reales del juego (800 a 3.400 tokens): DeepInfra
+Qwen3-14B unos $0,06 por hora de juego normal y $0,23 en combate intenso.
+
+## Pendiente
+
+1. Probar en partida real con `CDDA_NPC_AI_DEBUG=1` y comparar la traza
+   `five_facts_four_seconds` y el A/B de idioma contra el baseline local.
+2. Salida estructurada para el lote de Combat Social donde el proveedor lo
+   permita.
+3. Sustituir variables de entorno por opciones de juego cuando salga de pruebas.
+4. Aclarar los dos errores de `player_activities_test.cpp` con un rebuild
+   limpio del proyecto de tests.

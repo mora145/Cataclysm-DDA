@@ -4,6 +4,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <string>
 
@@ -222,6 +223,23 @@ constexpr std::int64_t gemini_backoff_ms = 20000;
 
 std::atomic<std::int64_t> gemini_backoff_until_ms{ 0 };
 
+// OpenAI-compatible chat completions (DeepInfra by default).  Qwen/Qwen3-14B
+// is the same model as the local Ollama profile, so sampling copies it.
+constexpr const char *openai_default_host = "api.deepinfra.com";
+constexpr const char *openai_default_path = "/v1/openai/chat/completions";
+constexpr const char *openai_default_model = "Qwen/Qwen3-14B";
+constexpr int openai_default_max_output_tokens = 192;
+constexpr const char *openai_temperature = "0.4";
+constexpr const char *openai_top_p = "0.85";
+constexpr int openai_seed_value = 1;
+// Qwen3's official soft switch.  The chat template honours it on every
+// provider, unlike vendor-specific reasoning flags, and the model then emits
+// an empty <think></think> block that parse_openai_response_json strips.
+constexpr const char *openai_no_think_suffix = "\n/no_think";
+constexpr std::int64_t openai_backoff_ms = 20000;
+
+std::atomic<std::int64_t> openai_backoff_until_ms{ 0 };
+
 std::int64_t monotonic_ms()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -330,6 +348,59 @@ const std::string &gemini_api_key()
 {
     static const std::string key = environment_value( "CDDA_NPC_AI_GEMINI_API_KEY" );
     return key;
+}
+
+const std::string &openai_api_key()
+{
+    static const std::string key = environment_value( "CDDA_NPC_AI_OPENAI_API_KEY" );
+    return key;
+}
+
+std::string environment_or_default( const char *name, const char *fallback )
+{
+    const std::string value = environment_value( name );
+    return value.empty() ? std::string( fallback ) : value;
+}
+
+// Honour "retry in 46.39s" / "retry after 20 seconds" style hints found in a
+// 429/503 body.  Returns fallback_ms when nothing usable is present.
+std::int64_t backoff_from_body( const std::string &body, const std::int64_t fallback_ms )
+{
+    for( const char *marker : { "retry in ", "retry after ", "Retry-After: " } ) {
+        const std::size_t at = body.find( marker );
+        if( at == std::string::npos ) {
+            continue;
+        }
+        const double seconds = std::atof( body.c_str() + at + std::strlen( marker ) );
+        if( seconds > 0.0 && seconds < 3600.0 ) {
+            return static_cast<std::int64_t>( seconds * 1000.0 ) + 1000;
+        }
+    }
+    return fallback_ms;
+}
+
+// Qwen3 wraps reasoning in <think>...</think>; with /no_think the block is
+// empty but still present.  Spoken text must never carry it.
+std::string strip_think_blocks( std::string text )
+{
+    while( true ) {
+        const std::size_t open = text.find( "<think>" );
+        if( open == std::string::npos ) {
+            break;
+        }
+        const std::size_t close = text.find( "</think>", open );
+        if( close == std::string::npos ) {
+            text.erase( open );
+            break;
+        }
+        text.erase( open, close + 8 - open );
+    }
+    const std::size_t first = text.find_first_not_of( " \t\r\n" );
+    if( first == std::string::npos ) {
+        return std::string();
+    }
+    const std::size_t last = text.find_last_not_of( " \t\r\n" );
+    return text.substr( first, last - first + 1 );
 }
 
 } // namespace
@@ -477,14 +548,28 @@ llm_provider active_llm_provider()
         for( char &c : value ) {
             c = static_cast<char>( std::tolower( static_cast<unsigned char>( c ) ) );
         }
-        return value == "gemini" ? llm_provider::gemini : llm_provider::ollama;
+        if( value == "gemini" ) {
+            return llm_provider::gemini;
+        }
+        if( value == "openai" || value == "deepinfra" ) {
+            return llm_provider::openai;
+        }
+        return llm_provider::ollama;
     }();
     return provider;
 }
 
 const char *active_llm_provider_name()
 {
-    return active_llm_provider() == llm_provider::gemini ? "gemini" : "ollama";
+    switch( active_llm_provider() ) {
+        case llm_provider::gemini:
+            return "gemini";
+        case llm_provider::openai:
+            return "openai";
+        case llm_provider::ollama:
+        default:
+            return "ollama";
+    }
 }
 
 std::string gemini_model_name()
@@ -677,8 +762,12 @@ ai_response ask_gemini( const std::string &prompt,
     }
 
     if( post.status_code == 429 || post.status_code == 503 ) {
-        gemini_backoff_until_ms.store( monotonic_ms() + gemini_backoff_ms,
-                                       std::memory_order_relaxed );
+        // Measured 2026-09-03 against the free tier: no Retry-After header, but
+        // the body says "Please retry in 46.39s".  Honour that when present so
+        // the queue stays quiet for the real window instead of a guess.
+        gemini_backoff_until_ms.store(
+            monotonic_ms() + backoff_from_body( post.body, gemini_backoff_ms ),
+            std::memory_order_relaxed );
     }
 
     if( post.status_code != 200 ) {
@@ -697,6 +786,231 @@ ai_response ask_gemini( const std::string &prompt,
 }
 
 // ---------------------------------------------------------------------------
+// OpenAI-compatible chat completions (DeepInfra / Qwen3-14B by default)
+// ---------------------------------------------------------------------------
+
+std::string openai_model_name()
+{
+    static const std::string model =
+        environment_or_default( "CDDA_NPC_AI_OPENAI_MODEL", openai_default_model );
+    return model;
+}
+
+std::string openai_host()
+{
+    static const std::string host =
+        environment_or_default( "CDDA_NPC_AI_OPENAI_HOST", openai_default_host );
+    return host;
+}
+
+std::string openai_path()
+{
+    static const std::string path =
+        environment_or_default( "CDDA_NPC_AI_OPENAI_PATH", openai_default_path );
+    return path;
+}
+
+int openai_max_output_tokens()
+{
+    static const int tokens = []() {
+        const std::string value = environment_value( "CDDA_NPC_AI_OPENAI_MAX_TOKENS" );
+        const int parsed = value.empty() ? 0 : std::atoi( value.c_str() );
+        return parsed > 0 ? parsed : openai_default_max_output_tokens;
+    }();
+    return tokens;
+}
+
+bool openai_api_key_available()
+{
+    return !openai_api_key().empty();
+}
+
+std::string openai_request_parameters_summary()
+{
+    return "model=" + openai_model_name() + " host=" + openai_host() +
+           " path=" + openai_path() +
+           " temperature=" + openai_temperature + " top_p=" + openai_top_p +
+           " max_tokens=" + std::to_string( openai_max_output_tokens() ) +
+           " seed=" + std::to_string( openai_seed_value ) +
+           " no_think=suffix extra_json=" +
+           ( environment_value( "CDDA_NPC_AI_OPENAI_EXTRA_JSON" ).empty() ? "none" : "set" ) +
+           " api_key=" + ( openai_api_key_available() ? "present" : "MISSING" );
+}
+
+std::string build_openai_request_json( const std::string &prompt,
+                                       const std::string &system_prompt )
+{
+    log_llm_request( "OPENAI", openai_request_parameters_summary(), prompt, system_prompt );
+    std::string body = std::string( "{\"model\":\"" ) + escape_json_string( openai_model_name() ) +
+                       "\",\"messages\":[{\"role\":\"system\",\"content\":\"" +
+                       escape_json_string( system_prompt ) +
+                       "\"},{\"role\":\"user\",\"content\":\"" +
+                       escape_json_string( prompt + openai_no_think_suffix ) +
+                       "\"}],\"stream\":false,\"temperature\":" + openai_temperature +
+                       ",\"top_p\":" + openai_top_p +
+                       ",\"max_tokens\":" + std::to_string( openai_max_output_tokens() ) +
+                       ",\"seed\":" + std::to_string( openai_seed_value );
+    // Raw pass-through for provider-specific knobs, e.g.
+    // "top_k":20,"repetition_penalty":1.1 or "chat_template_kwargs":{...}.
+    static const std::string extra = environment_value( "CDDA_NPC_AI_OPENAI_EXTRA_JSON" );
+    if( !extra.empty() ) {
+        body += "," + extra;
+    } else if( openai_host() == openai_default_host ) {
+        // DeepInfra accepts these vLLM-style knobs (verified 2026-09-03), so
+        // the remote Qwen3-14B samples exactly like Miguel's local Modelfile.
+        // Other OpenAI-compatible hosts may reject unknown fields; they get
+        // them only through CDDA_NPC_AI_OPENAI_EXTRA_JSON.
+        body += ",\"top_k\":20,\"repetition_penalty\":1.1";
+    }
+    body += "}";
+    return body;
+}
+
+ai_response parse_openai_response_json( const std::string &response_body,
+                                        const std::int64_t http_completed_ms )
+{
+    try {
+        std::istringstream stream( response_body );
+        TextJsonIn json_input( stream );
+        TextJsonObject object = json_input.get_object();
+        object.allow_omitted_members();
+
+        // OpenAI style {"error":{"message":...}} and DeepInfra style
+        // {"detail":"..."} / {"detail":{"error":"..."}} error envelopes.
+        std::string error_text;
+        if( object.has_object( "error" ) ) {
+            TextJsonObject error_object = object.get_object( "error" );
+            error_object.allow_omitted_members();
+            error_text = error_object.get_string( "message", "" );
+            const std::string type = error_object.get_string( "type", "" );
+            if( !type.empty() ) {
+                error_text = type + ": " + error_text;
+            }
+        } else if( object.has_string( "detail" ) ) {
+            error_text = object.get_string( "detail" );
+        } else if( object.has_object( "detail" ) ) {
+            TextJsonObject detail = object.get_object( "detail" );
+            detail.allow_omitted_members();
+            error_text = detail.get_string( "error", detail.get_string( "message", "error" ) );
+        }
+        if( !error_text.empty() ) {
+            const std::string error = "OpenAI-compatible endpoint error: " + error_text;
+            log_llm_response( response_body, "", error, 0, 0, 0, false );
+            return {false, "", error, http_completed_ms, monotonic_ms()};
+        }
+
+        int prompt_tokens = 0;
+        int output_tokens = 0;
+        if( object.has_object( "usage" ) ) {
+            TextJsonObject usage = object.get_object( "usage" );
+            usage.allow_omitted_members();
+            prompt_tokens = usage.get_int( "prompt_tokens", 0 );
+            output_tokens = usage.get_int( "completion_tokens", 0 );
+        }
+
+        if( !object.has_array( "choices" ) ) {
+            const std::string error = "OpenAI-compatible endpoint returned no choices";
+            log_llm_response( response_body, "", error, prompt_tokens, output_tokens, 0, false );
+            return {false, "", error, http_completed_ms, monotonic_ms(), prompt_tokens,
+                    output_tokens, false};
+        }
+        TextJsonArray choices = object.get_array( "choices" );
+        if( !choices.has_more() ) {
+            const std::string error = "OpenAI-compatible endpoint returned an empty choice list";
+            log_llm_response( response_body, "", error, prompt_tokens, output_tokens, 0, false );
+            return {false, "", error, http_completed_ms, monotonic_ms(), prompt_tokens,
+                    output_tokens, false};
+        }
+        TextJsonObject choice = choices.next_object();
+        choice.allow_omitted_members();
+        const std::string finish_reason = choice.get_string( "finish_reason", "" );
+
+        std::string response_text;
+        if( choice.has_object( "message" ) ) {
+            TextJsonObject message = choice.get_object( "message" );
+            message.allow_omitted_members();
+            // reasoning_content, when present, is deliberately ignored: only
+            // the spoken text reaches the validators.
+            if( message.has_string( "content" ) ) {
+                response_text = strip_think_blocks( message.get_string( "content" ) );
+            }
+        }
+
+        if( response_text.empty() ) {
+            const std::string error = "OpenAI-compatible endpoint returned no text (finish_reason=" +
+                                      finish_reason + ")";
+            log_llm_response( response_body, "", error, prompt_tokens, output_tokens, 0, false );
+            return {false, "", error, http_completed_ms, monotonic_ms(), prompt_tokens,
+                    output_tokens, false};
+        }
+
+        const bool truncated = finish_reason == "length";
+        const std::int64_t parsed_ms = monotonic_ms();
+        log_llm_response( response_body, response_text, "", prompt_tokens, output_tokens,
+                          openai_max_output_tokens(), truncated );
+        return {true, response_text, "", http_completed_ms, parsed_ms, prompt_tokens,
+                output_tokens, truncated};
+    } catch( const JsonError &err ) {
+        const std::int64_t parsed_ms = monotonic_ms();
+        const std::string error =
+            std::string( "Invalid JSON from OpenAI-compatible endpoint: " ) + err.what();
+        log_llm_response( response_body, "", error, 0, 0, 0, false );
+        return {false, "", error, http_completed_ms, parsed_ms};
+    }
+}
+
+ai_response ask_openai( const std::string &prompt,
+                        const std::string &system_prompt )
+{
+    if( !openai_api_key_available() ) {
+        return {false, "", "CDDA_NPC_AI_OPENAI_API_KEY is not set."};
+    }
+    if( !ollama_prompt_fits_context( prompt, system_prompt ) ) {
+        return {false, "", "NPC AI prompt exceeds the configured context budget."};
+    }
+    if( monotonic_ms() < openai_backoff_until_ms.load( std::memory_order_relaxed ) ) {
+        return {false, "", "OpenAI-compatible endpoint is in quota backoff; request skipped."};
+    }
+#if !defined(_WIN32)
+
+    return {false, "", "NPC AI currently supports Windows only."};
+
+#else
+
+    const std::string request_body = build_openai_request_json( prompt, system_prompt );
+    const std::wstring headers =
+        L"Content-Type: application/json; charset=utf-8\r\n"
+        L"Authorization: Bearer " + ascii_to_wide( openai_api_key() ) + L"\r\n";
+
+    const winhttp_post_result post = winhttp_post(
+                                         ascii_to_wide( openai_host() ), INTERNET_DEFAULT_HTTPS_PORT, true,
+                                         ascii_to_wide( openai_path() ), headers, request_body );
+
+    if( !post.transport_ok ) {
+        return {false, "", "OpenAI-compatible endpoint: " + post.error};
+    }
+
+    if( post.status_code == 429 || post.status_code == 503 ) {
+        openai_backoff_until_ms.store(
+            monotonic_ms() + backoff_from_body( post.body, openai_backoff_ms ),
+            std::memory_order_relaxed );
+    }
+
+    if( post.status_code != 200 ) {
+        const ai_response parsed = parse_openai_response_json( post.body, monotonic_ms() );
+        if( !parsed.error.empty() && parsed.error.rfind( "Invalid JSON", 0 ) != 0 ) {
+            return {false, "", parsed.error + " (HTTP " + std::to_string( post.status_code ) + ")"};
+        }
+        return {false, "", "OpenAI-compatible endpoint returned HTTP status " +
+                std::to_string( post.status_code )};
+    }
+
+    return parse_openai_response_json( post.body, monotonic_ms() );
+
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
 
@@ -706,6 +1020,8 @@ ai_response ask_llm( const std::string &prompt,
     switch( active_llm_provider() ) {
         case llm_provider::gemini:
             return ask_gemini( prompt, system_prompt );
+        case llm_provider::openai:
+            return ask_openai( prompt, system_prompt );
         case llm_provider::ollama:
         default:
             return ask_ollama( prompt, system_prompt );
