@@ -48,7 +48,15 @@ La prueba de conexión al guardar también cubre Local: hace una petición real
 a `localhost:11434` y muestra la respuesta de Ollama o el error de conexión.
 Otros servicios compatibles con OpenAI (Hugging Face, Groq, Together) no están
 en el menú; se alcanzan con `CDDA_NPC_AI_OPENAI_HOST` y
-`CDDA_NPC_AI_OPENAI_PATH`. Los ids se verificaron contra las listas
+`CDDA_NPC_AI_OPENAI_PATH`.
+
+**Prioridad: el menú manda.** Desde el 03/09/2026 las opciones del juego
+prevalecen sobre las variables de entorno para proveedor y modelo. Las
+variables solo se usan cuando no hay opciones cargadas (herramientas, tests
+sin interfaz) o para ajustes que no tienen opción (host y ruta alternativos,
+tokens máximos, JSON extra). Antes era al revés y una variable olvidada hacía
+que la prueba de conexión probara siempre el mismo proveedor aunque en el menú
+se eligiera otro. Los ids se verificaron contra las listas
 de modelos que devuelven DeepInfra y Google el 03/09/2026; solo se incluyen
 modelos instruct cuyo razonamiento se puede apagar. Para un modelo o host
 fuera de la lista siguen las variables de entorno `CDDA_NPC_AI_OPENAI_MODEL`,

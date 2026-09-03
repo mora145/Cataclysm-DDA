@@ -284,10 +284,6 @@ TEST_CASE( "openai_compatible_request_contract_and_response_parser_are_explicit"
 TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overrides",
            "[npc_ai][npc_ai_openai][npc_ai_gemini]" )
 {
-    if( std::getenv( "CDDA_NPC_AI_PROVIDER" ) != nullptr ) {
-        WARN( "CDDA_NPC_AI_PROVIDER is set; option precedence check skipped" );
-        return;
-    }
     options_manager::cOpt &provider = get_options().get_option( "NPC_AI_PROVIDER" );
     options_manager::cOpt &model = get_options().get_option( "NPC_AI_DEEPINFRA_MODEL" );
     options_manager::cOpt &gemini_model = get_options().get_option( "NPC_AI_GEMINI_MODEL" );
@@ -331,11 +327,11 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
     CHECK( model.checkPrerequisite() );
     CHECK_FALSE( gemini_model.checkPrerequisite() );
     CHECK( key_file.checkPrerequisite() );
-    if( std::getenv( "CDDA_NPC_AI_OPENAI_MODEL" ) == nullptr ) {
+    {
         CHECK( npc_ai::openai_model_name() == "Qwen/Qwen3-32B" );
     }
     // Each provider has its own model option; one never leaks into the other.
-    if( std::getenv( "CDDA_NPC_AI_GEMINI_MODEL" ) == nullptr ) {
+    {
         CHECK( npc_ai::gemini_model_name() == gemini_model.getValue() );
     }
 
@@ -343,6 +339,13 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
     CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::gemini );
     CHECK( gemini_model.checkPrerequisite() );
     CHECK_FALSE( model.checkPrerequisite() );
+
+#if defined(_WIN32)
+    // The menu beats a leftover environment variable while the game runs.
+    _putenv_s( "CDDA_NPC_AI_PROVIDER", "deepinfra" );
+    CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::gemini );
+    _putenv_s( "CDDA_NPC_AI_PROVIDER", "" );
+#endif
 
     provider.setValue( previous_provider );
     model.setValue( previous_model );
@@ -374,7 +377,7 @@ TEST_CASE( "remote_providers_answer_a_grounded_spanish_prompt_live",
     }
 
     // The options-screen connection test, exercised end to end.
-    if( npc_ai::openai_api_key_available() && std::getenv( "CDDA_NPC_AI_PROVIDER" ) == nullptr ) {
+    if( npc_ai::openai_api_key_available() ) {
         options_manager::cOpt &provider = get_options().get_option( "NPC_AI_PROVIDER" );
         const std::string previous = provider.getValue();
         provider.setValue( "deepinfra" );

@@ -357,14 +357,20 @@ std::string game_option_string( const char *name )
     return get_option<std::string>( name );
 }
 
-// Precedence: environment variable (developer/testing override) > in-game
-// option > built-in default.  Options can change at runtime from the menu, so
-// nothing here is cached.
+// Precedence: in-game option > environment variable > built-in default.  The
+// menu must always win while the game runs: a leftover CDDA_NPC_AI_PROVIDER
+// from testing once made every in-game connection test hit the same provider
+// regardless of the selection.  Environment variables still drive tools and
+// tests that run without loaded options.  Nothing is cached, so menu changes
+// apply to the next request.
 std::string setting( const char *env_name, const char *option_name, const char *fallback )
 {
-    std::string value = environment_value( env_name );
-    if( value.empty() && option_name != nullptr ) {
+    std::string value;
+    if( option_name != nullptr ) {
         value = game_option_string( option_name );
+    }
+    if( value.empty() ) {
+        value = environment_value( env_name );
     }
     return value.empty() ? std::string( fallback ) : value;
 }
