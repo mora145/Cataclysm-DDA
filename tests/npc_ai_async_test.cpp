@@ -295,9 +295,27 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
     const std::string previous_provider = provider.getValue();
     const std::string previous_model = model.getValue();
 
-    // Only two providers are offered in game; DeepInfra is the default.
+    // Three providers in game: Local (Ollama, default), DeepInfra, Gemini.
+    CHECK( provider.getDefaultText( false ).find( "Default: ollama" ) != std::string::npos );
     CHECK( provider.getDefaultText( false ).find( "deepinfra" ) != std::string::npos );
-    CHECK( provider.getDefaultText( false ).find( "ollama" ) == std::string::npos );
+    CHECK( provider.getDefaultText( false ).find( "gemini" ) != std::string::npos );
+
+    provider.setValue( "ollama" );
+    CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::ollama );
+    CHECK( std::string( npc_ai::active_llm_provider_name() ) == "ollama" );
+    // Local needs no key and no remote model: everything else is greyed out.
+    CHECK_FALSE( model.checkPrerequisite() );
+    CHECK_FALSE( gemini_model.checkPrerequisite() );
+    CHECK_FALSE( key_file.checkPrerequisite() );
+    // The connection test targets the local server when Local is selected.
+    {
+        const npc_ai::llm_connection_report local = npc_ai::test_llm_connection();
+        CHECK( local.provider == "ollama" );
+        CHECK( local.endpoint.find( "localhost:11434" ) != std::string::npos );
+        CHECK( local.key_source.empty() );
+        // ok depends on whether Ollama runs on this machine; only the shape is asserted.
+        CHECK_FALSE( local.detail.empty() );
+    }
     CHECK( model.getDefaultText( false ).find( "Qwen/Qwen3-14B" ) != std::string::npos );
     CHECK( gemini_model.getDefaultText( false ).find( "gemini-2.5-flash" ) != std::string::npos );
     CHECK( key_file.getDefaultText( false ).find( "npc_ai_api_key.txt" ) != std::string::npos );
@@ -312,7 +330,7 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
     CHECK( std::string( npc_ai::active_llm_provider_name() ) == "openai" );
     CHECK( model.checkPrerequisite() );
     CHECK_FALSE( gemini_model.checkPrerequisite() );
-    CHECK_FALSE( key_file.hasPrerequisite() );
+    CHECK( key_file.checkPrerequisite() );
     if( std::getenv( "CDDA_NPC_AI_OPENAI_MODEL" ) == nullptr ) {
         CHECK( npc_ai::openai_model_name() == "Qwen/Qwen3-32B" );
     }

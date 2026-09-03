@@ -1736,13 +1736,14 @@ void options_manager::add_options_general()
                                         to_translation( "Language model used for NPC dialogue and orders." ) ),
     [&]( const std::string & page_id ) {
         add( "NPC_AI_PROVIDER", page_id, to_translation( "NPC AI provider" ),
-             to_translation( "DeepInfra: Qwen3-14B and other open models through an OpenAI-compatible API; cheap, tested, needs a DeepInfra API key.  "
+             to_translation( "Local: Ollama running on this computer at localhost:11434 with the qwen3:14b model; no internet and no key needed.  "
+                             "DeepInfra: the same Qwen3-14B and other open models through an OpenAI-compatible API; cheap, tested, needs a DeepInfra API key.  "
                              "Gemini: Google Gemini models; needs a Google AI Studio API key and, for combat chatter, billing enabled.  "
-                             "The key is read from the file named below inside the config folder (created for you with instructions the first time), "
+                             "Remote keys are read from the file named below inside the config folder (created for you with instructions the first time), "
                              "or from the environment variable CDDA_NPC_AI_OPENAI_API_KEY / CDDA_NPC_AI_GEMINI_API_KEY.  "
-                             "Saving these options runs a connection test and shows the result.  Takes effect on the next request." ),
-        { { "deepinfra", to_translation( "DeepInfra (Qwen3-14B and others)" ) }, { "gemini", to_translation( "Google Gemini" ) } },
-        "deepinfra"
+                             "Saving these options runs a connection test against the selected provider and shows the result.  Takes effect on the next request." ),
+        { { "ollama", to_translation( "Local (Ollama, qwen3:14b)" ) }, { "deepinfra", to_translation( "DeepInfra (Qwen3-14B and others)" ) }, { "gemini", to_translation( "Google Gemini" ) } },
+        "ollama"
            );
 
         // Model ids verified against the providers' own model lists on
@@ -1791,6 +1792,7 @@ void options_manager::add_options_general()
         // options follow MEMORY_MAP_MODE.
         get_option( "NPC_AI_DEEPINFRA_MODEL" ).setPrerequisite( "NPC_AI_PROVIDER", "deepinfra" );
         get_option( "NPC_AI_GEMINI_MODEL" ).setPrerequisite( "NPC_AI_PROVIDER", "gemini" );
+        get_option( "NPC_AI_API_KEY_FILE" ).setPrerequisites( "NPC_AI_PROVIDER", { "deepinfra", "gemini" } );
     } );
 
     add_empty_line();
