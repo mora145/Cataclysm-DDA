@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -24,6 +25,7 @@
 #include "npc_ai_debug.h"
 #include "npc_ai_memory.h"
 #include "npc_ai_spontaneous.h"
+#include "options.h"
 #include "overmapbuffer.h"
 #include "player_helpers.h"
 #include "point.h"
@@ -277,6 +279,40 @@ TEST_CASE( "openai_compatible_request_contract_and_response_parser_are_explicit"
         CHECK_FALSE( no_key.success );
         CHECK( no_key.error.find( "CDDA_NPC_AI_OPENAI_API_KEY" ) != std::string::npos );
     }
+}
+
+TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overrides",
+           "[npc_ai][npc_ai_openai][npc_ai_gemini]" )
+{
+    if( std::getenv( "CDDA_NPC_AI_PROVIDER" ) != nullptr ) {
+        WARN( "CDDA_NPC_AI_PROVIDER is set; option precedence check skipped" );
+        return;
+    }
+    options_manager::cOpt &provider = get_options().get_option( "NPC_AI_PROVIDER" );
+    options_manager::cOpt &model = get_options().get_option( "NPC_AI_REMOTE_MODEL" );
+    const std::string previous_provider = provider.getValue();
+    const std::string previous_model = model.getValue();
+
+    provider.setValue( "ollama" );
+    CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::ollama );
+    CHECK( std::string( npc_ai::active_llm_provider_name() ) == "ollama" );
+
+    provider.setValue( "deepinfra" );
+    model.setValue( "Qwen/Qwen3-32B" );
+    CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::openai );
+    if( std::getenv( "CDDA_NPC_AI_OPENAI_MODEL" ) == nullptr ) {
+        CHECK( npc_ai::openai_model_name() == "Qwen/Qwen3-32B" );
+    }
+    // The shared model option must not leak into the other provider.
+    if( std::getenv( "CDDA_NPC_AI_GEMINI_MODEL" ) == nullptr ) {
+        CHECK( npc_ai::gemini_model_name() == "gemini-2.5-flash" );
+    }
+
+    provider.setValue( "gemini" );
+    CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::gemini );
+
+    provider.setValue( previous_provider );
+    model.setValue( previous_model );
 }
 
 // Hidden: needs network and CDDA_NPC_AI_OPENAI_API_KEY / CDDA_NPC_AI_GEMINI_API_KEY.

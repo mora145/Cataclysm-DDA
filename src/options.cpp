@@ -1728,6 +1728,35 @@ void options_manager::add_options_general()
 
     add_empty_line();
 
+    // CDDA-AI: which language model answers for NPCs.  The API key is never an
+    // option (options.json gets shared); it comes from an environment variable
+    // or from config/npc_ai_api_key.txt.  Environment variables override these.
+    add_option_group( "general", Group( "npc_ai_opts", to_translation( "NPC AI options" ),
+                                        to_translation( "Language model used for NPC dialogue and orders." ) ),
+    [&]( const std::string & page_id ) {
+        add( "NPC_AI_PROVIDER", page_id, to_translation( "NPC AI provider" ),
+             to_translation( "Local: Ollama on this computer at localhost:11434 with qwen3:14b, no internet needed.  "
+                             "DeepInfra: the same Qwen3-14B model served remotely through an OpenAI-compatible API; needs an API key.  "
+                             "Gemini: Google Gemini 2.5 Flash; needs an API key.  "
+                             "Remote keys are read from the environment variable CDDA_NPC_AI_OPENAI_API_KEY / CDDA_NPC_AI_GEMINI_API_KEY "
+                             "or from the file npc_ai_api_key.txt inside the config folder.  Takes effect on the next request." ),
+        { { "ollama", to_translation( "Local (Ollama)" ) }, { "deepinfra", to_translation( "Remote API (DeepInfra, Qwen3-14B)" ) }, { "gemini", to_translation( "Remote API (Google Gemini)" ) } },
+        "ollama"
+           );
+
+        add( "NPC_AI_REMOTE_MODEL", page_id, to_translation( "NPC AI remote model" ),
+             to_translation( "Model id sent to the remote provider.  Leave empty for the provider default (Qwen/Qwen3-14B on DeepInfra, gemini-2.5-flash on Gemini)." ),
+             "", 120
+           );
+
+        add( "NPC_AI_REMOTE_HOST", page_id, to_translation( "NPC AI remote host" ),
+             to_translation( "Host of an OpenAI-compatible endpoint.  Leave empty for api.deepinfra.com.  Only used by the DeepInfra/OpenAI-compatible provider." ),
+             "", 120
+           );
+    } );
+
+    add_empty_line();
+
     add_option_group( "general", Group( "soundpacks_opts", to_translation( "Soundpack options" ),
                                         to_translation( "Options regarding soundpack." ) ),
     [&]( const std::string & page_id ) {

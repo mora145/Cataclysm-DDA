@@ -29,9 +29,35 @@ prompt. Todo el código nuevo vive en `src/npc_ai_client.cpp`.
 
 ## Configuración
 
-Todo por variables de entorno de usuario. **Las claves nunca van en el
-código, en el repo, ni en `config\`.** Tras cambiarlas hay que abrir una
-terminal nueva o relanzar el juego.
+### Desde el juego (recomendado para jugadores)
+
+Opciones, pestaña General, grupo **NPC AI options**:
+
+| Opción | Valores | Efecto |
+|---|---|---|
+| NPC AI provider | Local (Ollama) · Remote API (DeepInfra, Qwen3-14B) · Remote API (Google Gemini) | Qué backend responde. Por defecto Local, el comportamiento original de Miguel |
+| NPC AI remote model | texto | Id del modelo remoto; vacío usa el defecto del proveedor elegido |
+| NPC AI remote host | texto | Host compatible OpenAI; vacío usa `api.deepinfra.com` |
+
+El cambio se aplica en la siguiente petición, sin reiniciar. Las variables de
+entorno de abajo, si existen, mandan sobre estas opciones (uso de desarrollo).
+
+**La clave nunca es una opción**, porque `options.json` se comparte y se pega
+en reportes. El juego la busca en este orden:
+
+1. Variable de entorno `CDDA_NPC_AI_OPENAI_API_KEY` o
+   `CDDA_NPC_AI_GEMINI_API_KEY`.
+2. Archivo `config\npc_ai_api_key_deepinfra.txt` o
+   `config\npc_ai_api_key_gemini.txt`.
+3. Archivo `config\npc_ai_api_key.txt` (vale para el proveedor activo).
+
+El archivo lleva la clave en la primera línea; se ignoran líneas vacías y las
+que empiezan por `#`. La carpeta `config\` ya está fuera de git. Sin clave,
+el proveedor remoto falla en local sin tocar la red y el juego sigue.
+
+### Por variables de entorno (desarrollo y tests)
+
+Tras cambiarlas hay que abrir una terminal nueva o relanzar el juego.
 
 ### DeepInfra (Qwen3-14B, el modelo de Miguel)
 

@@ -8,8 +8,12 @@
 #include <sstream>
 #include <string>
 
+#include <fstream>
+
 #include "json.h"
 #include "npc_ai_debug.h"
+#include "options.h"
+#include "path_info.h"
 
 #if defined(_WIN32)
 
@@ -343,23 +347,76 @@ void log_llm_response( const std::string &raw, const std::string &clean,
     }
 }
 
-// Never logged, never copied anywhere else.  Read once per process.
-const std::string &gemini_api_key()
+// Game option, or empty when options are not loaded yet (early startup, tools).
+std::string game_option_string( const char *name )
 {
-    static const std::string key = environment_value( "CDDA_NPC_AI_GEMINI_API_KEY" );
-    return key;
+    if( !has_option( name ) ) {
+        return std::string();
+    }
+    return get_option<std::string>( name );
 }
 
-const std::string &openai_api_key()
+// Precedence: environment variable (developer/testing override) > in-game
+// option > built-in default.  Options can change at runtime from the menu, so
+// nothing here is cached.
+std::string setting( const char *env_name, const char *option_name, const char *fallback )
 {
-    static const std::string key = environment_value( "CDDA_NPC_AI_OPENAI_API_KEY" );
-    return key;
-}
-
-std::string environment_or_default( const char *name, const char *fallback )
-{
-    const std::string value = environment_value( name );
+    std::string value = environment_value( env_name );
+    if( value.empty() && option_name != nullptr ) {
+        value = game_option_string( option_name );
+    }
     return value.empty() ? std::string( fallback ) : value;
+}
+
+std::string trim_copy( std::string text )
+{
+    const std::size_t first = text.find_first_not_of( " \t\r\n" );
+    if( first == std::string::npos ) {
+        return std::string();
+    }
+    const std::size_t last = text.find_last_not_of( " \t\r\n" );
+    return text.substr( first, last - first + 1 );
+}
+
+// First non-empty line of a file inside the config directory, or empty.
+std::string config_file_first_line( const char *filename )
+{
+    const std::string path = PATH_INFO::config_dir() + filename;
+    std::ifstream input( path, std::ios::binary );
+    std::string line;
+    while( input && std::getline( input, line ) ) {
+        line = trim_copy( line );
+        if( !line.empty() && line[0] != '#' ) {
+            return line;
+        }
+    }
+    return std::string();
+}
+
+// Secrets are never options: options.json gets shared and pasted into bug
+// reports.  Sources, in order: environment variable, a provider-specific key
+// file, then the generic key file, all inside the config folder.  Never
+// logged, never copied anywhere else.
+std::string remote_api_key( const char *env_name, const char *provider_file )
+{
+    std::string key = environment_value( env_name );
+    if( key.empty() ) {
+        key = config_file_first_line( provider_file );
+    }
+    if( key.empty() ) {
+        key = config_file_first_line( "npc_ai_api_key.txt" );
+    }
+    return key;
+}
+
+std::string gemini_api_key()
+{
+    return remote_api_key( "CDDA_NPC_AI_GEMINI_API_KEY", "npc_ai_api_key_gemini.txt" );
+}
+
+std::string openai_api_key()
+{
+    return remote_api_key( "CDDA_NPC_AI_OPENAI_API_KEY", "npc_ai_api_key_deepinfra.txt" );
 }
 
 // Honour "retry in 46.39s" / "retry after 20 seconds" style hints found in a
@@ -543,20 +600,17 @@ ai_response ask_ollama( const std::string &prompt,
 
 llm_provider active_llm_provider()
 {
-    static const llm_provider provider = []() {
-        std::string value = environment_value( "CDDA_NPC_AI_PROVIDER" );
-        for( char &c : value ) {
-            c = static_cast<char>( std::tolower( static_cast<unsigned char>( c ) ) );
-        }
-        if( value == "gemini" ) {
-            return llm_provider::gemini;
-        }
-        if( value == "openai" || value == "deepinfra" ) {
-            return llm_provider::openai;
-        }
-        return llm_provider::ollama;
-    }();
-    return provider;
+    std::string value = setting( "CDDA_NPC_AI_PROVIDER", "NPC_AI_PROVIDER", "ollama" );
+    for( char &c : value ) {
+        c = static_cast<char>( std::tolower( static_cast<unsigned char>( c ) ) );
+    }
+    if( value == "gemini" ) {
+        return llm_provider::gemini;
+    }
+    if( value == "openai" || value == "deepinfra" ) {
+        return llm_provider::openai;
+    }
+    return llm_provider::ollama;
 }
 
 const char *active_llm_provider_name()
@@ -574,11 +628,11 @@ const char *active_llm_provider_name()
 
 std::string gemini_model_name()
 {
-    static const std::string model = []() {
-        const std::string value = environment_value( "CDDA_NPC_AI_GEMINI_MODEL" );
-        return value.empty() ? std::string( gemini_default_model ) : value;
-    }();
-    return model;
+    // The shared in-game "remote model" option only applies to the provider
+    // that is actually selected, so a DeepInfra model id never leaks here.
+    const bool option_applies = active_llm_provider() == llm_provider::gemini;
+    return setting( "CDDA_NPC_AI_GEMINI_MODEL", option_applies ? "NPC_AI_REMOTE_MODEL" : nullptr,
+                    gemini_default_model );
 }
 
 int gemini_max_output_tokens()
@@ -791,23 +845,19 @@ ai_response ask_gemini( const std::string &prompt,
 
 std::string openai_model_name()
 {
-    static const std::string model =
-        environment_or_default( "CDDA_NPC_AI_OPENAI_MODEL", openai_default_model );
-    return model;
+    const bool option_applies = active_llm_provider() == llm_provider::openai;
+    return setting( "CDDA_NPC_AI_OPENAI_MODEL", option_applies ? "NPC_AI_REMOTE_MODEL" : nullptr,
+                    openai_default_model );
 }
 
 std::string openai_host()
 {
-    static const std::string host =
-        environment_or_default( "CDDA_NPC_AI_OPENAI_HOST", openai_default_host );
-    return host;
+    return setting( "CDDA_NPC_AI_OPENAI_HOST", "NPC_AI_REMOTE_HOST", openai_default_host );
 }
 
 std::string openai_path()
 {
-    static const std::string path =
-        environment_or_default( "CDDA_NPC_AI_OPENAI_PATH", openai_default_path );
-    return path;
+    return setting( "CDDA_NPC_AI_OPENAI_PATH", nullptr, openai_default_path );
 }
 
 int openai_max_output_tokens()
