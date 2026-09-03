@@ -959,7 +959,8 @@ std::string dialogue_language_fallback( const std::string &event_kind,
 }
 
 std::string build_npc_prompt( const npc &who, const std::string &player_line,
-                              const npc_prompt_purpose purpose )
+                              const npc_prompt_purpose purpose,
+                              const std::size_t reserved_suffix_bytes )
 {
     scoped_profile profile( profile_subsystem::context );
     std::ostringstream prompt;
@@ -1004,8 +1005,8 @@ std::string build_npc_prompt( const npc &who, const std::string &player_line,
     const std::string ending = suffix.str();
     const std::size_t total_budget = context_prompt_budget_bytes( intent );
     const std::size_t system_bytes = build_npc_system_prompt( who, purpose ).size();
-    const std::size_t budget =
-        total_budget > system_bytes ? total_budget - system_bytes : 0;
+    const std::size_t reserved = system_bytes + reserved_suffix_bytes;
+    const std::size_t budget = total_budget > reserved ? total_budget - reserved : 0;
     if( budget == 0 ) {
         return {};
     }

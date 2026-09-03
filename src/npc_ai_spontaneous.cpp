@@ -1246,14 +1246,10 @@ std::string build_spontaneous_prompt(
         "tu memoria y lo que realmente percibes.";
 
 
-    std::string prompt =
-        npc_ai::build_npc_prompt(
-            who,
-            synthetic_line,
-            npc_ai::npc_prompt_purpose::spontaneous_dialogue
-        );
-
-
+    // The trailing block below is built first so its exact size can be
+    // reserved inside the routed budget.  Otherwise a scene-heavy sensory
+    // context fills the budget and this suffix pushes the prompt past the hard
+    // transport limit, which the queue rejects at enqueue time.
     std::ostringstream extra;
 
 
@@ -1369,8 +1365,15 @@ std::string build_spontaneous_prompt(
         << "\n\nOUTPUT_LANGUAGE=" << npc_ai::current_dialogue_language_name() << "\n";
 
 
-    prompt +=
-        extra.str();
+    const std::string extra_text = extra.str();
+    std::string prompt =
+        npc_ai::build_npc_prompt(
+            who,
+            synthetic_line,
+            npc_ai::npc_prompt_purpose::spontaneous_dialogue,
+            extra_text.size()
+        );
+    prompt += extra_text;
 
 
     return prompt;
@@ -1810,8 +1813,17 @@ void process_spontaneous_speech(
         state.pending_request_id = queued.request_id;
         debug_line( std::string( "ENQUEUED NPC=" ) + who.get_name() + " | event=" + event.kind );
     } else {
+        // The queue rejects for several reasons (pending duplicate, context
+        // budget, shutting down); surface the exact one instead of guessing.
         debug_line( std::string( "SUPPRESSED_PENDING NPC=" ) + who.get_name() +
-                    " | event=" + event.kind );
+                    " | event=" + event.kind + " | reason=" + queued.error +
+                    " | prompt_bytes=" + std::to_string( prompt.size() ) );
+        if( runtime_debug_enabled() ) {
+            debug_stream rejected( "npc_ai_spontaneous_rejected_prompt.txt", true );
+            if( rejected ) {
+                rejected << prompt;
+            }
+        }
     }
 }
 

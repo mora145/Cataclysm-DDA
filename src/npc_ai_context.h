@@ -62,9 +62,14 @@ std::string build_npc_system_prompt(
     const npc &who,
     npc_prompt_purpose purpose = npc_prompt_purpose::direct_dialogue );
 
+// reserved_suffix_bytes: room the caller will append after this prompt (for
+// example the spontaneous weather/event block).  It is subtracted from the
+// routed budget so the final prompt plus system prompt still fits the hard
+// transport context, instead of being rejected at enqueue time.
 std::string build_npc_prompt(
     const npc &who, const std::string &player_line,
-    npc_prompt_purpose purpose = npc_prompt_purpose::direct_dialogue );
+    npc_prompt_purpose purpose = npc_prompt_purpose::direct_dialogue,
+    std::size_t reserved_suffix_bytes = 0 );
 
 } // namespace npc_ai
 

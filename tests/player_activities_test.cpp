@@ -1407,8 +1407,11 @@ TEST_CASE( "prying", "[activity][prying]" )
         return dummy.get_wielded_item();
     };
 
+    // MSVC 14.38 rejects tripoint_bub_ms::zero as a lambda default argument
+    // (C2653/C2065); hoisting the constant keeps older toolsets building.
+    static const tripoint_bub_ms default_prying_target = tripoint_bub_ms::zero;
     auto setup_activity = [&dummy]( const item_location & tool,
-    const tripoint_bub_ms &target = tripoint_bub_ms::zero ) -> void {
+    const tripoint_bub_ms &target = default_prying_target ) -> void {
         prying_activity_actor act{target, tool};
         act.testing = true;
         dummy.assign_activity( act );
