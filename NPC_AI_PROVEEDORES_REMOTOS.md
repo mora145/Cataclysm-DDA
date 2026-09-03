@@ -33,14 +33,19 @@ prompt. Todo el código nuevo vive en `src/npc_ai_client.cpp`.
 
 Opciones, pestaña General, grupo **NPC AI options**:
 
-| Opción | Valores | Efecto |
+| Opción | Qué se pide | Valor por defecto (ya escrito) |
 |---|---|---|
-| NPC AI provider | Local (Ollama) · Remote API (DeepInfra, Qwen3-14B) · Remote API (Google Gemini) | Qué backend responde. Por defecto Local, el comportamiento original de Miguel |
-| NPC AI remote model | texto | Id del modelo remoto; vacío usa el defecto del proveedor elegido |
-| NPC AI remote host | texto | Host compatible OpenAI; vacío usa `api.deepinfra.com` |
+| NPC AI provider | Elegir: Local (Ollama) · Remote API (DeepInfra, Qwen3-14B) · Remote API (Google Gemini) | Local, el comportamiento original de Miguel |
+| DeepInfra: model name | NOMBRE del modelo tal como lo lista el proveedor. No es una clave | `Qwen/Qwen3-14B` |
+| DeepInfra: host name | NOMBRE de host sin `https://` ni ruta. No es una clave | `api.deepinfra.com` |
+| Gemini: model name | NOMBRE del modelo de Google. No es una clave | `gemini-2.5-flash` |
+| API key: file name in the config folder | NOMBRE DE ARCHIVO dentro de `config\` cuya primera línea es la clave. **No pegar la clave aquí** | `npc_ai_api_key.txt` |
 
-El cambio se aplica en la siguiente petición, sin reiniciar. Las variables de
-entorno de abajo, si existen, mandan sobre estas opciones (uso de desarrollo).
+Los campos de texto vienen rellenos con su valor por defecto para que se vea
+qué formato se espera; cada opción dice en su ayuda si pide un nombre de
+modelo, un host o un nombre de archivo, y ninguna pide la clave. El cambio se
+aplica en la siguiente petición, sin reiniciar. Las variables de entorno de
+abajo, si existen, mandan sobre estas opciones (uso de desarrollo).
 
 **La clave nunca es una opción**, porque `options.json` se comparte y se pega
 en reportes. El juego la busca en este orden:
@@ -49,7 +54,9 @@ en reportes. El juego la busca en este orden:
    `CDDA_NPC_AI_GEMINI_API_KEY`.
 2. Archivo `config\npc_ai_api_key_deepinfra.txt` o
    `config\npc_ai_api_key_gemini.txt`.
-3. Archivo `config\npc_ai_api_key.txt` (vale para el proveedor activo).
+3. El archivo indicado en la opción "API key: file name", por defecto
+   `config\npc_ai_api_key.txt`. Si alguien pega la clave en esa opción en
+   vez de un nombre de archivo, no se envía nada: no existe tal archivo.
 
 El archivo lleva la clave en la primera línea; se ignoran líneas vacías y las
 que empiezan por `#`. La carpeta `config\` ya está fuera de git. Sin clave,

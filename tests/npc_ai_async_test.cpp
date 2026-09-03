@@ -289,9 +289,18 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
         return;
     }
     options_manager::cOpt &provider = get_options().get_option( "NPC_AI_PROVIDER" );
-    options_manager::cOpt &model = get_options().get_option( "NPC_AI_REMOTE_MODEL" );
+    options_manager::cOpt &model = get_options().get_option( "NPC_AI_DEEPINFRA_MODEL" );
+    options_manager::cOpt &gemini_model = get_options().get_option( "NPC_AI_GEMINI_MODEL" );
+    options_manager::cOpt &host = get_options().get_option( "NPC_AI_REMOTE_HOST" );
+    options_manager::cOpt &key_file = get_options().get_option( "NPC_AI_API_KEY_FILE" );
     const std::string previous_provider = provider.getValue();
     const std::string previous_model = model.getValue();
+
+    // Free-text options ship with their defaults visible, never empty.
+    CHECK( model.getDefaultText( false ).find( "Qwen/Qwen3-14B" ) != std::string::npos );
+    CHECK( gemini_model.getDefaultText( false ).find( "gemini-2.5-flash" ) != std::string::npos );
+    CHECK( host.getDefaultText( false ).find( "api.deepinfra.com" ) != std::string::npos );
+    CHECK( key_file.getDefaultText( false ).find( "npc_ai_api_key.txt" ) != std::string::npos );
 
     provider.setValue( "ollama" );
     CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::ollama );
@@ -303,9 +312,9 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
     if( std::getenv( "CDDA_NPC_AI_OPENAI_MODEL" ) == nullptr ) {
         CHECK( npc_ai::openai_model_name() == "Qwen/Qwen3-32B" );
     }
-    // The shared model option must not leak into the other provider.
+    // Each provider has its own model option; one never leaks into the other.
     if( std::getenv( "CDDA_NPC_AI_GEMINI_MODEL" ) == nullptr ) {
-        CHECK( npc_ai::gemini_model_name() == "gemini-2.5-flash" );
+        CHECK( npc_ai::gemini_model_name() == gemini_model.getValue() );
     }
 
     provider.setValue( "gemini" );

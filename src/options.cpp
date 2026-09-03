@@ -1744,14 +1744,29 @@ void options_manager::add_options_general()
         "ollama"
            );
 
-        add( "NPC_AI_REMOTE_MODEL", page_id, to_translation( "NPC AI remote model" ),
-             to_translation( "Model id sent to the remote provider.  Leave empty for the provider default (Qwen/Qwen3-14B on DeepInfra, gemini-2.5-flash on Gemini)." ),
-             "", 120
+        add( "NPC_AI_DEEPINFRA_MODEL", page_id, to_translation( "DeepInfra: model name" ),
+             to_translation( "Model NAME as listed by the provider, for example Qwen/Qwen3-14B.  This is not an API key.  "
+                             "Default: Qwen/Qwen3-14B, the same model the local Ollama profile uses.  Only used when the provider is DeepInfra." ),
+             "Qwen/Qwen3-14B", 120
            );
 
-        add( "NPC_AI_REMOTE_HOST", page_id, to_translation( "NPC AI remote host" ),
-             to_translation( "Host of an OpenAI-compatible endpoint.  Leave empty for api.deepinfra.com.  Only used by the DeepInfra/OpenAI-compatible provider." ),
-             "", 120
+        add( "NPC_AI_REMOTE_HOST", page_id, to_translation( "DeepInfra: host name" ),
+             to_translation( "HOST NAME of an OpenAI-compatible endpoint, without https:// or path, for example api.deepinfra.com.  "
+                             "This is not an API key.  Default: api.deepinfra.com.  Change it only to point at another OpenAI-compatible service." ),
+             "api.deepinfra.com", 120
+           );
+
+        add( "NPC_AI_GEMINI_MODEL", page_id, to_translation( "Gemini: model name" ),
+             to_translation( "Model NAME as listed by Google, for example gemini-2.5-flash.  This is not an API key.  "
+                             "Default: gemini-2.5-flash.  Only used when the provider is Gemini." ),
+             "gemini-2.5-flash", 120
+           );
+
+        add( "NPC_AI_API_KEY_FILE", page_id, to_translation( "API key: file name in the config folder" ),
+             to_translation( "Do NOT type your API key here.  Type only the FILE NAME of a text file inside the config folder whose first line is the key, "
+                             "for example npc_ai_api_key.txt.  Default: npc_ai_api_key.txt.  The environment variables CDDA_NPC_AI_OPENAI_API_KEY / "
+                             "CDDA_NPC_AI_GEMINI_API_KEY take precedence when set." ),
+             "npc_ai_api_key.txt", 120
            );
     } );
 

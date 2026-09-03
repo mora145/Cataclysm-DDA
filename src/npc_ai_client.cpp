@@ -404,7 +404,13 @@ std::string remote_api_key( const char *env_name, const char *provider_file )
         key = config_file_first_line( provider_file );
     }
     if( key.empty() ) {
-        key = config_file_first_line( "npc_ai_api_key.txt" );
+        // File NAME from the in-game option; a player who pasted the key
+        // itself into that option gets nothing, never a request with it.
+        std::string file = game_option_string( "NPC_AI_API_KEY_FILE" );
+        if( file.empty() || file.find_first_of( "/\\" ) != std::string::npos ) {
+            file = "npc_ai_api_key.txt";
+        }
+        key = config_file_first_line( file.c_str() );
     }
     return key;
 }
@@ -628,11 +634,7 @@ const char *active_llm_provider_name()
 
 std::string gemini_model_name()
 {
-    // The shared in-game "remote model" option only applies to the provider
-    // that is actually selected, so a DeepInfra model id never leaks here.
-    const bool option_applies = active_llm_provider() == llm_provider::gemini;
-    return setting( "CDDA_NPC_AI_GEMINI_MODEL", option_applies ? "NPC_AI_REMOTE_MODEL" : nullptr,
-                    gemini_default_model );
+    return setting( "CDDA_NPC_AI_GEMINI_MODEL", "NPC_AI_GEMINI_MODEL", gemini_default_model );
 }
 
 int gemini_max_output_tokens()
@@ -845,9 +847,7 @@ ai_response ask_gemini( const std::string &prompt,
 
 std::string openai_model_name()
 {
-    const bool option_applies = active_llm_provider() == llm_provider::openai;
-    return setting( "CDDA_NPC_AI_OPENAI_MODEL", option_applies ? "NPC_AI_REMOTE_MODEL" : nullptr,
-                    openai_default_model );
+    return setting( "CDDA_NPC_AI_OPENAI_MODEL", "NPC_AI_DEEPINFRA_MODEL", openai_default_model );
 }
 
 std::string openai_host()
