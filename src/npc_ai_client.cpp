@@ -632,17 +632,19 @@ ai_response ask_ollama( const std::string &prompt,
 
 llm_provider active_llm_provider()
 {
-    std::string value = setting( "CDDA_NPC_AI_PROVIDER", "NPC_AI_PROVIDER", "ollama" );
+    // The in-game list offers DeepInfra (default) and Gemini.  Ollama remains
+    // reachable only through CDDA_NPC_AI_PROVIDER=ollama for local development.
+    std::string value = setting( "CDDA_NPC_AI_PROVIDER", "NPC_AI_PROVIDER", "deepinfra" );
     for( char &c : value ) {
         c = static_cast<char>( std::tolower( static_cast<unsigned char>( c ) ) );
     }
     if( value == "gemini" ) {
         return llm_provider::gemini;
     }
-    if( value == "openai" || value == "deepinfra" ) {
-        return llm_provider::openai;
+    if( value == "ollama" ) {
+        return llm_provider::ollama;
     }
-    return llm_provider::ollama;
+    return llm_provider::openai;
 }
 
 const char *active_llm_provider_name()

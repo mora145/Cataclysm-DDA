@@ -291,37 +291,28 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
     options_manager::cOpt &provider = get_options().get_option( "NPC_AI_PROVIDER" );
     options_manager::cOpt &model = get_options().get_option( "NPC_AI_DEEPINFRA_MODEL" );
     options_manager::cOpt &gemini_model = get_options().get_option( "NPC_AI_GEMINI_MODEL" );
-    options_manager::cOpt &host = get_options().get_option( "NPC_AI_OPENAI_ENDPOINT" );
     options_manager::cOpt &key_file = get_options().get_option( "NPC_AI_API_KEY_FILE" );
     const std::string previous_provider = provider.getValue();
     const std::string previous_model = model.getValue();
 
-    // Free-text options ship with their defaults visible, never empty.
+    // Only two providers are offered in game; DeepInfra is the default.
+    CHECK( provider.getDefaultText( false ).find( "deepinfra" ) != std::string::npos );
+    CHECK( provider.getDefaultText( false ).find( "ollama" ) == std::string::npos );
     CHECK( model.getDefaultText( false ).find( "Qwen/Qwen3-14B" ) != std::string::npos );
     CHECK( gemini_model.getDefaultText( false ).find( "gemini-2.5-flash" ) != std::string::npos );
-    CHECK( host.getDefaultText( false ).find( "deepinfra" ) != std::string::npos );
-    if( std::getenv( "CDDA_NPC_AI_OPENAI_HOST" ) == nullptr ) {
-        host.setValue( "groq" );
-        CHECK( npc_ai::openai_host() == "api.groq.com" );
-        CHECK( npc_ai::openai_path() == "/openai/v1/chat/completions" );
-        host.setValue( "deepinfra" );
-        CHECK( npc_ai::openai_host() == "api.deepinfra.com" );
-    }
     CHECK( key_file.getDefaultText( false ).find( "npc_ai_api_key.txt" ) != std::string::npos );
-
-    provider.setValue( "ollama" );
-    CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::ollama );
-    CHECK( std::string( npc_ai::active_llm_provider_name() ) == "ollama" );
-    // With the local provider every remote sub-option is inactive in the menu.
-    CHECK( model.hasPrerequisite() );
-    CHECK_FALSE( model.checkPrerequisite() );
-    CHECK_FALSE( host.checkPrerequisite() );
-    CHECK_FALSE( gemini_model.checkPrerequisite() );
-    CHECK_FALSE( key_file.checkPrerequisite() );
+    if( std::getenv( "CDDA_NPC_AI_OPENAI_HOST" ) == nullptr ) {
+        CHECK( npc_ai::openai_host() == "api.deepinfra.com" );
+        CHECK( npc_ai::openai_path() == "/v1/openai/chat/completions" );
+    }
 
     provider.setValue( "deepinfra" );
     model.setValue( "Qwen/Qwen3-32B" );
     CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::openai );
+    CHECK( std::string( npc_ai::active_llm_provider_name() ) == "openai" );
+    CHECK( model.checkPrerequisite() );
+    CHECK_FALSE( gemini_model.checkPrerequisite() );
+    CHECK_FALSE( key_file.hasPrerequisite() );
     if( std::getenv( "CDDA_NPC_AI_OPENAI_MODEL" ) == nullptr ) {
         CHECK( npc_ai::openai_model_name() == "Qwen/Qwen3-32B" );
     }
@@ -333,9 +324,7 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
     provider.setValue( "gemini" );
     CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::gemini );
     CHECK( gemini_model.checkPrerequisite() );
-    CHECK( key_file.checkPrerequisite() );
     CHECK_FALSE( model.checkPrerequisite() );
-    CHECK_FALSE( host.checkPrerequisite() );
 
     provider.setValue( previous_provider );
     model.setValue( previous_model );

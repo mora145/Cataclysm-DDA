@@ -1736,13 +1736,13 @@ void options_manager::add_options_general()
                                         to_translation( "Language model used for NPC dialogue and orders." ) ),
     [&]( const std::string & page_id ) {
         add( "NPC_AI_PROVIDER", page_id, to_translation( "NPC AI provider" ),
-             to_translation( "Local: Ollama on this computer at localhost:11434 with qwen3:14b, no internet needed.  "
-                             "DeepInfra: the same Qwen3-14B model served remotely through an OpenAI-compatible API; needs an API key.  "
-                             "Gemini: Google Gemini 2.5 Flash; needs an API key.  "
-                             "Remote keys are read from the environment variable CDDA_NPC_AI_OPENAI_API_KEY / CDDA_NPC_AI_GEMINI_API_KEY "
-                             "or from the file npc_ai_api_key.txt inside the config folder.  Takes effect on the next request." ),
-        { { "ollama", to_translation( "Local (Ollama)" ) }, { "deepinfra", to_translation( "Remote API (DeepInfra, Qwen3-14B)" ) }, { "gemini", to_translation( "Remote API (Google Gemini)" ) } },
-        "ollama"
+             to_translation( "DeepInfra: Qwen3-14B and other open models through an OpenAI-compatible API; cheap, tested, needs a DeepInfra API key.  "
+                             "Gemini: Google Gemini models; needs a Google AI Studio API key and, for combat chatter, billing enabled.  "
+                             "The key is read from the file named below inside the config folder (created for you with instructions the first time), "
+                             "or from the environment variable CDDA_NPC_AI_OPENAI_API_KEY / CDDA_NPC_AI_GEMINI_API_KEY.  "
+                             "Saving these options runs a connection test and shows the result.  Takes effect on the next request." ),
+        { { "deepinfra", to_translation( "DeepInfra (Qwen3-14B and others)" ) }, { "gemini", to_translation( "Google Gemini" ) } },
+        "deepinfra"
            );
 
         // Model ids verified against the providers' own model lists on
@@ -1763,20 +1763,6 @@ void options_manager::add_options_general()
             { "google/gemma-3-27b-it", to_translation( "Gemma 3 27B" ) }
         },
         "Qwen/Qwen3-14B"
-           );
-
-        add( "NPC_AI_OPENAI_ENDPOINT", page_id, to_translation( "DeepInfra: service" ),
-             to_translation( "Which OpenAI-compatible service receives the requests.  DeepInfra is the tested default.  "
-                             "Hugging Face routes to the same models through your Hugging Face token.  Groq and Together use their own "
-                             "model ids, so with them set the model through the environment variable CDDA_NPC_AI_OPENAI_MODEL.  "
-                             "The API key file is the same for all of them." ),
-        {
-            { "deepinfra", to_translation( "DeepInfra (api.deepinfra.com, tested)" ) },
-            { "huggingface", to_translation( "Hugging Face Inference Providers (router.huggingface.co)" ) },
-            { "groq", to_translation( "Groq (api.groq.com)" ) },
-            { "together", to_translation( "Together AI (api.together.xyz)" ) }
-        },
-        "deepinfra"
            );
 
         add( "NPC_AI_GEMINI_MODEL", page_id, to_translation( "Gemini: model" ),
@@ -1804,9 +1790,7 @@ void options_manager::add_options_general()
         // are greyed out and refuse edits, the same way the memory-map colour
         // options follow MEMORY_MAP_MODE.
         get_option( "NPC_AI_DEEPINFRA_MODEL" ).setPrerequisite( "NPC_AI_PROVIDER", "deepinfra" );
-        get_option( "NPC_AI_OPENAI_ENDPOINT" ).setPrerequisite( "NPC_AI_PROVIDER", "deepinfra" );
         get_option( "NPC_AI_GEMINI_MODEL" ).setPrerequisite( "NPC_AI_PROVIDER", "gemini" );
-        get_option( "NPC_AI_API_KEY_FILE" ).setPrerequisites( "NPC_AI_PROVIDER", { "deepinfra", "gemini" } );
     } );
 
     add_empty_line();

@@ -35,18 +35,18 @@ Opciones, pestaña General, grupo **NPC AI options**:
 
 | Opción | Tipo | Valores | Por defecto |
 |---|---|---|---|
-| NPC AI provider | lista | Local (Ollama) · Remote API (DeepInfra, Qwen3-14B) · Remote API (Google Gemini) | Local, el comportamiento original de Miguel |
-| DeepInfra: model | lista | Qwen3 14B (igual que local, probado) · Qwen3 32B · Qwen3 30B-A3B · Llama 3.3 70B · Llama 3.1 8B (más barato) · Mistral Small 3.2 24B · Gemma 3 27B | Qwen3 14B |
-| DeepInfra: service | lista | DeepInfra (probado) · Hugging Face Inference Providers · Groq · Together AI | DeepInfra |
+| NPC AI provider | lista | DeepInfra (Qwen3-14B y otros) · Google Gemini | DeepInfra |
+| DeepInfra: model | lista | Qwen3 14B (igual que el perfil local de Miguel, probado) · Qwen3 32B · Qwen3 30B-A3B · Llama 3.3 70B · Llama 3.1 8B (más barato) · Mistral Small 3.2 24B · Gemma 3 27B | Qwen3 14B |
 | Gemini: model | lista | 2.5 Flash (probado) · 2.5 Flash-Lite (más barato) · 2.5 Pro · 3.5 Flash (sin probar) · 3.8 Flash (sin probar) | 2.5 Flash |
 | API key: file name in the config folder | texto | NOMBRE DE ARCHIVO dentro de `config\`. **No pegar la clave aquí** | `npc_ai_api_key.txt` |
 
-Las opciones dependen del proveedor elegido: con Local todas las demás
-aparecen en gris y no se pueden editar; con DeepInfra se activan su modelo, su
-servicio y el archivo de clave; con Gemini, su modelo y el archivo de clave.
-Es el mismo mecanismo de prerrequisitos que usa el juego para los colores del
-mapa de memoria. Todo son listas cerradas salvo el nombre del archivo de la
-clave, así no hay que teclear ids de modelo ni hosts. Los ids se verificaron contra las listas
+Solo hay dos proveedores en el menú, por decisión del 03/09/2026. El modelo de
+cada proveedor se activa solo cuando ese proveedor está elegido; el otro
+aparece en gris. Ollama local ya no está en el menú: sigue en el código y se
+activa únicamente con la variable de entorno `CDDA_NPC_AI_PROVIDER=ollama`,
+para desarrollo. Otros servicios compatibles con OpenAI (Hugging Face, Groq,
+Together) tampoco están en el menú; se alcanzan con `CDDA_NPC_AI_OPENAI_HOST`
+y `CDDA_NPC_AI_OPENAI_PATH`. Los ids se verificaron contra las listas
 de modelos que devuelven DeepInfra y Google el 03/09/2026; solo se incluyen
 modelos instruct cuyo razonamiento se puede apagar. Para un modelo o host
 fuera de la lista siguen las variables de entorno `CDDA_NPC_AI_OPENAI_MODEL`,
