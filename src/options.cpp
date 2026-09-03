@@ -1744,22 +1744,52 @@ void options_manager::add_options_general()
         "ollama"
            );
 
-        add( "NPC_AI_DEEPINFRA_MODEL", page_id, to_translation( "DeepInfra: model name" ),
-             to_translation( "Model NAME as listed by the provider, for example Qwen/Qwen3-14B.  This is not an API key.  "
-                             "Default: Qwen/Qwen3-14B, the same model the local Ollama profile uses.  Only used when the provider is DeepInfra." ),
-             "Qwen/Qwen3-14B", 120
+        // Model ids verified against the providers' own model lists on
+        // 2026-09-03.  Only instruct models whose reasoning can be switched
+        // off are listed; the prompts were tuned on Qwen3-14B.
+        add( "NPC_AI_DEEPINFRA_MODEL", page_id, to_translation( "DeepInfra: model" ),
+             to_translation( "Which model the DeepInfra provider runs.  Qwen3 14B is the same model as the local Ollama setup, "
+                             "so the NPC prompts need no retuning.  Larger models answer better and cost a little more; "
+                             "Llama 3.1 8B is the cheapest.  Only used when the provider is DeepInfra.  "
+                             "Advanced: the environment variable CDDA_NPC_AI_OPENAI_MODEL overrides this with any model id." ),
+        {
+            { "Qwen/Qwen3-14B", to_translation( "Qwen3 14B (same as local, tested)" ) },
+            { "Qwen/Qwen3-32B", to_translation( "Qwen3 32B (stronger, similar price)" ) },
+            { "Qwen/Qwen3-30B-A3B", to_translation( "Qwen3 30B-A3B (fast)" ) },
+            { "meta-llama/Llama-3.3-70B-Instruct-Turbo", to_translation( "Llama 3.3 70B" ) },
+            { "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", to_translation( "Llama 3.1 8B (cheapest)" ) },
+            { "mistralai/Mistral-Small-3.2-24B-Instruct-2506", to_translation( "Mistral Small 3.2 24B" ) },
+            { "google/gemma-3-27b-it", to_translation( "Gemma 3 27B" ) }
+        },
+        "Qwen/Qwen3-14B"
            );
 
-        add( "NPC_AI_REMOTE_HOST", page_id, to_translation( "DeepInfra: host name" ),
-             to_translation( "HOST NAME of an OpenAI-compatible endpoint, without https:// or path, for example api.deepinfra.com.  "
-                             "This is not an API key.  Default: api.deepinfra.com.  Change it only to point at another OpenAI-compatible service." ),
-             "api.deepinfra.com", 120
+        add( "NPC_AI_OPENAI_ENDPOINT", page_id, to_translation( "DeepInfra: service" ),
+             to_translation( "Which OpenAI-compatible service receives the requests.  DeepInfra is the tested default.  "
+                             "Hugging Face routes to the same models through your Hugging Face token.  Groq and Together use their own "
+                             "model ids, so with them set the model through the environment variable CDDA_NPC_AI_OPENAI_MODEL.  "
+                             "The API key file is the same for all of them." ),
+        {
+            { "deepinfra", to_translation( "DeepInfra (api.deepinfra.com, tested)" ) },
+            { "huggingface", to_translation( "Hugging Face Inference Providers (router.huggingface.co)" ) },
+            { "groq", to_translation( "Groq (api.groq.com)" ) },
+            { "together", to_translation( "Together AI (api.together.xyz)" ) }
+        },
+        "deepinfra"
            );
 
-        add( "NPC_AI_GEMINI_MODEL", page_id, to_translation( "Gemini: model name" ),
-             to_translation( "Model NAME as listed by Google, for example gemini-2.5-flash.  This is not an API key.  "
-                             "Default: gemini-2.5-flash.  Only used when the provider is Gemini." ),
-             "gemini-2.5-flash", 120
+        add( "NPC_AI_GEMINI_MODEL", page_id, to_translation( "Gemini: model" ),
+             to_translation( "Which Google model the Gemini provider runs.  Gemini 2.5 Flash is the tested default; Flash-Lite is cheaper, "
+                             "Pro is stronger and slower.  The free tier allows very few requests per day; combat chatter needs billing enabled.  "
+                             "Only used when the provider is Gemini.  Advanced: CDDA_NPC_AI_GEMINI_MODEL overrides this." ),
+        {
+            { "gemini-2.5-flash", to_translation( "Gemini 2.5 Flash (tested)" ) },
+            { "gemini-2.5-flash-lite", to_translation( "Gemini 2.5 Flash-Lite (cheapest)" ) },
+            { "gemini-2.5-pro", to_translation( "Gemini 2.5 Pro (strongest, slower)" ) },
+            { "gemini-3.5-flash", to_translation( "Gemini 3.5 Flash (not tested)" ) },
+            { "gemini-3.8-flash", to_translation( "Gemini 3.8 Flash (newest, not tested)" ) }
+        },
+        "gemini-2.5-flash"
            );
 
         add( "NPC_AI_API_KEY_FILE", page_id, to_translation( "API key: file name in the config folder" ),

@@ -1,5 +1,6 @@
 #include "npc_ai_client.h"
 
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -850,14 +851,45 @@ std::string openai_model_name()
     return setting( "CDDA_NPC_AI_OPENAI_MODEL", "NPC_AI_DEEPINFRA_MODEL", openai_default_model );
 }
 
+namespace
+{
+struct openai_endpoint {
+    const char *id;
+    const char *host;
+    const char *path;
+};
+
+// Known OpenAI-compatible services selectable from the game options.  Host
+// and path always travel together; a stray env override of only one of them
+// still works because each getter consults its own variable first.
+constexpr std::array<openai_endpoint, 4> openai_endpoints = { {
+        { "deepinfra", openai_default_host, openai_default_path },
+        { "huggingface", "router.huggingface.co", "/v1/chat/completions" },
+        { "groq", "api.groq.com", "/openai/v1/chat/completions" },
+        { "together", "api.together.xyz", "/v1/chat/completions" },
+    }
+};
+
+const openai_endpoint &selected_openai_endpoint()
+{
+    const std::string id = game_option_string( "NPC_AI_OPENAI_ENDPOINT" );
+    for( const openai_endpoint &endpoint : openai_endpoints ) {
+        if( id == endpoint.id ) {
+            return endpoint;
+        }
+    }
+    return openai_endpoints.front();
+}
+} // namespace
+
 std::string openai_host()
 {
-    return setting( "CDDA_NPC_AI_OPENAI_HOST", "NPC_AI_REMOTE_HOST", openai_default_host );
+    return setting( "CDDA_NPC_AI_OPENAI_HOST", nullptr, selected_openai_endpoint().host );
 }
 
 std::string openai_path()
 {
-    return setting( "CDDA_NPC_AI_OPENAI_PATH", nullptr, openai_default_path );
+    return setting( "CDDA_NPC_AI_OPENAI_PATH", nullptr, selected_openai_endpoint().path );
 }
 
 int openai_max_output_tokens()

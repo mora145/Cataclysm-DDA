@@ -33,19 +33,23 @@ prompt. Todo el código nuevo vive en `src/npc_ai_client.cpp`.
 
 Opciones, pestaña General, grupo **NPC AI options**:
 
-| Opción | Qué se pide | Valor por defecto (ya escrito) |
-|---|---|---|
-| NPC AI provider | Elegir: Local (Ollama) · Remote API (DeepInfra, Qwen3-14B) · Remote API (Google Gemini) | Local, el comportamiento original de Miguel |
-| DeepInfra: model name | NOMBRE del modelo tal como lo lista el proveedor. No es una clave | `Qwen/Qwen3-14B` |
-| DeepInfra: host name | NOMBRE de host sin `https://` ni ruta. No es una clave | `api.deepinfra.com` |
-| Gemini: model name | NOMBRE del modelo de Google. No es una clave | `gemini-2.5-flash` |
-| API key: file name in the config folder | NOMBRE DE ARCHIVO dentro de `config\` cuya primera línea es la clave. **No pegar la clave aquí** | `npc_ai_api_key.txt` |
+| Opción | Tipo | Valores | Por defecto |
+|---|---|---|---|
+| NPC AI provider | lista | Local (Ollama) · Remote API (DeepInfra, Qwen3-14B) · Remote API (Google Gemini) | Local, el comportamiento original de Miguel |
+| DeepInfra: model | lista | Qwen3 14B (igual que local, probado) · Qwen3 32B · Qwen3 30B-A3B · Llama 3.3 70B · Llama 3.1 8B (más barato) · Mistral Small 3.2 24B · Gemma 3 27B | Qwen3 14B |
+| DeepInfra: service | lista | DeepInfra (probado) · Hugging Face Inference Providers · Groq · Together AI | DeepInfra |
+| Gemini: model | lista | 2.5 Flash (probado) · 2.5 Flash-Lite (más barato) · 2.5 Pro · 3.5 Flash (sin probar) · 3.8 Flash (sin probar) | 2.5 Flash |
+| API key: file name in the config folder | texto | NOMBRE DE ARCHIVO dentro de `config\`. **No pegar la clave aquí** | `npc_ai_api_key.txt` |
 
-Los campos de texto vienen rellenos con su valor por defecto para que se vea
-qué formato se espera; cada opción dice en su ayuda si pide un nombre de
-modelo, un host o un nombre de archivo, y ninguna pide la clave. El cambio se
-aplica en la siguiente petición, sin reiniciar. Las variables de entorno de
-abajo, si existen, mandan sobre estas opciones (uso de desarrollo).
+Todo son listas cerradas salvo el nombre del archivo de la clave, así no hay
+que teclear ids de modelo ni hosts. Los ids se verificaron contra las listas
+de modelos que devuelven DeepInfra y Google el 03/09/2026; solo se incluyen
+modelos instruct cuyo razonamiento se puede apagar. Para un modelo o host
+fuera de la lista siguen las variables de entorno `CDDA_NPC_AI_OPENAI_MODEL`,
+`CDDA_NPC_AI_OPENAI_HOST` y `CDDA_NPC_AI_OPENAI_PATH`. Con Groq o Together los
+ids de modelo son propios de cada servicio, así que ahí hay que fijar el
+modelo por variable de entorno. El cambio se aplica en la siguiente petición,
+sin reiniciar. Las variables de entorno, si existen, mandan sobre las opciones.
 
 **La clave nunca es una opción**, porque `options.json` se comparte y se pega
 en reportes. El juego la busca en este orden:
