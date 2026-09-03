@@ -41,8 +41,12 @@ Opciones, pestaña General, grupo **NPC AI options**:
 | Gemini: model | lista | 2.5 Flash (probado) · 2.5 Flash-Lite (más barato) · 2.5 Pro · 3.5 Flash (sin probar) · 3.8 Flash (sin probar) | 2.5 Flash |
 | API key: file name in the config folder | texto | NOMBRE DE ARCHIVO dentro de `config\`. **No pegar la clave aquí** | `npc_ai_api_key.txt` |
 
-Todo son listas cerradas salvo el nombre del archivo de la clave, así no hay
-que teclear ids de modelo ni hosts. Los ids se verificaron contra las listas
+Las opciones dependen del proveedor elegido: con Local todas las demás
+aparecen en gris y no se pueden editar; con DeepInfra se activan su modelo, su
+servicio y el archivo de clave; con Gemini, su modelo y el archivo de clave.
+Es el mismo mecanismo de prerrequisitos que usa el juego para los colores del
+mapa de memoria. Todo son listas cerradas salvo el nombre del archivo de la
+clave, así no hay que teclear ids de modelo ni hosts. Los ids se verificaron contra las listas
 de modelos que devuelven DeepInfra y Google el 03/09/2026; solo se incluyen
 modelos instruct cuyo razonamiento se puede apagar. Para un modelo o host
 fuera de la lista siguen las variables de entorno `CDDA_NPC_AI_OPENAI_MODEL`,

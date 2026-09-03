@@ -312,6 +312,12 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
     provider.setValue( "ollama" );
     CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::ollama );
     CHECK( std::string( npc_ai::active_llm_provider_name() ) == "ollama" );
+    // With the local provider every remote sub-option is inactive in the menu.
+    CHECK( model.hasPrerequisite() );
+    CHECK_FALSE( model.checkPrerequisite() );
+    CHECK_FALSE( host.checkPrerequisite() );
+    CHECK_FALSE( gemini_model.checkPrerequisite() );
+    CHECK_FALSE( key_file.checkPrerequisite() );
 
     provider.setValue( "deepinfra" );
     model.setValue( "Qwen/Qwen3-32B" );
@@ -326,6 +332,10 @@ TEST_CASE( "npc_ai_provider_follows_the_game_option_unless_the_environment_overr
 
     provider.setValue( "gemini" );
     CHECK( npc_ai::active_llm_provider() == npc_ai::llm_provider::gemini );
+    CHECK( gemini_model.checkPrerequisite() );
+    CHECK( key_file.checkPrerequisite() );
+    CHECK_FALSE( model.checkPrerequisite() );
+    CHECK_FALSE( host.checkPrerequisite() );
 
     provider.setValue( previous_provider );
     model.setValue( previous_model );

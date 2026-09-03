@@ -1798,6 +1798,14 @@ void options_manager::add_options_general()
                              "CDDA_NPC_AI_GEMINI_API_KEY take precedence when set." ),
              "npc_ai_api_key.txt", 120
            );
+
+        // Only the sub-options of the selected provider are active; the rest
+        // are greyed out and refuse edits, the same way the memory-map colour
+        // options follow MEMORY_MAP_MODE.
+        get_option( "NPC_AI_DEEPINFRA_MODEL" ).setPrerequisite( "NPC_AI_PROVIDER", "deepinfra" );
+        get_option( "NPC_AI_OPENAI_ENDPOINT" ).setPrerequisite( "NPC_AI_PROVIDER", "deepinfra" );
+        get_option( "NPC_AI_GEMINI_MODEL" ).setPrerequisite( "NPC_AI_PROVIDER", "gemini" );
+        get_option( "NPC_AI_API_KEY_FILE" ).setPrerequisites( "NPC_AI_PROVIDER", { "deepinfra", "gemini" } );
     } );
 
     add_empty_line();
