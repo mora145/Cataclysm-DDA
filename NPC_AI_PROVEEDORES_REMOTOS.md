@@ -106,6 +106,47 @@ cruda y los tokens. Las claves no se escriben nunca; solo
 Estimación con los prompts reales del juego (800 a 3.400 tokens): DeepInfra
 Qwen3-14B unos $0,06 por hora de juego normal y $0,23 en combate intenso.
 
+## Escenarios en vivo y correcciones (03/09/2026)
+
+`tests/npc_ai_live_scenarios_test.cpp` (tag oculto `[.npc_ai_live_scenarios]`)
+monta 20 situaciones reales en el motor, deja que el pipeline genere los
+prompts exactos, los envía al proveedor activo y escribe un informe Markdown
+con prompt, respuesta cruda, lo dicho en el juego, latencia y tokens. Sirve
+para cualquier proveedor y para comparar antes/después de un cambio de prompt.
+
+Primera pasada con Qwen3-14B en DeepInfra: 11 correctos, 5 parciales, 3
+incorrectos, 1 no ejercitado. Los tres incorrectos eran un NPC afirmando lo
+contrario de su estado real. Diagnóstico con los prompts exactos: dos de los
+tres no eran del modelo sino del Context Router, que no reconoció la pregunta
+y mandó un prompt de 300 bytes sin salud ni entorno.
+
+Correcciones aplicadas en esta rama:
+
+| Cambio | Archivo | Motivo |
+|---|---|---|
+| Palabras clave nuevas para HEALTH ("necesitas ayuda", "puedes caminar", "te encuentras", "how are you"...), PERCEPTION ("zombis cerca", "hay peligro", "estamos solos"...) y CURRENT_SITUATION ("es de noche", "esta oscuro", "que hora es", "hace frio"...) | `npc_ai_context.cpp` | Liam sangrando decía "estoy bien" porque no le llegaba el bloque de salud |
+| Bloque `=== ENTORNO ACTUAL ===` (noche, luz, oscuro, exterior, clima, temperatura) en la ruta CURRENT_SITUATION | `npc_ai_context.cpp` | Tres horas tras el atardecer afirmaba que era de día; la percepción no llevaba hora ni luz |
+| Línea `movilidad={puede_caminar...}` en el estado propio | `npc_ai_self.cpp` | Hallazgo 1 del backlog; pierna a 0 HP y "sí, puedo caminar" |
+| Reglas de severidad: una parte grave, rota, mordida, infectada o sangrando prohíbe decir "estoy bien"; los agregados no anulan una parte grave | `npc_ai_self.cpp`, `npc_ai_context.cpp` | Con `arm_r hp=10/100 grave` en el prompt, el modelo dijo "estoy bien, solo cansado" |
+| Regla de grado para diálogo directo y espontáneo: sin origen, historia, lugar, sonidos ni pasado que no estén en los datos | `npc_ai_context.cpp` | "Lo encontré en un supermercado", "escuché ruidos extraños" |
+| Reglas del evento espontáneo: el dolor es global sin parte del cuerpo y con intensidad proporcional | `npc_ai_spontaneous.cpp` | `dolor=10` se convirtió en "me duele mucho la cabeza" |
+
+Segunda pasada, mismo modelo, mismos 20 escenarios: 0 incorrectos. Los tres
+casos graves pasaron a correctos o parciales ("mi brazo derecho está
+gravemente dañado, pero... estoy bien"; "puedo caminar, pero con dificultad,
+mi pierna izquierda está rota"; "sí, es de noche, hay mucha oscuridad"). Sin
+enemigos ya no inventa ruidos; el dolor espontáneo ya no tiene localización.
+Gate `[npc_ai] --rng-seed 1`: 209 casos / 4228 aserciones, sin regresión.
+Latencia media de DeepInfra: 8,7 s en la primera pasada (picos de 33 s) y
+0,8 s en la segunda; varía con la hora, no con el tamaño del prompt.
+
+Sigue abierto: el modelo remata con "estoy bien" aunque acabe de describir
+una herida grave; el origen inventado de un objeto ("lo encontré en un
+garaje") persiste cuando la pregunta solo enruta la cabecera; una réplica NPC
+a NPC incoherente (Sarah, agarrada, preguntó "¿dónde estás atrapada?"); una
+promesa táctica ("¡voy a cubrirte!") pasó el filtro; y el modo por lotes de
+Combat Social no se activa con un simple avistamiento.
+
 ## Pendiente
 
 1. Probar en partida real con `CDDA_NPC_AI_DEBUG=1` y comparar la traza

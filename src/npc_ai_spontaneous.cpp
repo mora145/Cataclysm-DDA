@@ -1362,7 +1362,16 @@ std::string build_spontaneous_prompt(
         << "\n"
         << "detalle="
         << event.detail
-        << "\n\nOUTPUT_LANGUAGE=" << npc_ai::current_dialogue_language_name() << "\n";
+        << "\n\n"
+        // Live scenario run 2026-09-03: "dolor=10" became "me duele mucho la
+        // cabeza".  Pain here is a whole-body scalar; the model must not
+        // place it or scale it beyond the number.
+        << "REGLAS DEL EVENTO:\n"
+        << "- dolor es un valor global sin parte del cuerpo: no digas donde te duele.\n"
+        << "- La intensidad debe ser proporcional al valor: dolor<15 es leve, 15-40 "
+        "moderado, >40 fuerte.\n"
+        << "- No inventes la causa del evento ni detalles que no esten en los datos.\n"
+        << "\nOUTPUT_LANGUAGE=" << npc_ai::current_dialogue_language_name() << "\n";
 
 
     const std::string extra_text = extra.str();

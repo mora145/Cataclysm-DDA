@@ -14,9 +14,12 @@
 #include <string_view>
 #include <unordered_set>
 
+#include "calendar.h"
 #include "cata_utility.h"
 #include "item_location.h"
+#include "map.h"
 #include "npc.h"
+#include "weather.h"
 #include "output.h"
 #if defined( LOCALIZE )
 #include "translation_manager.h"
@@ -211,6 +214,27 @@ bool present_perception_query(
         lcmatch( player_line, "ves algun" ) ||
         lcmatch( player_line, "ves algo" ) ||
         lcmatch( player_line, "ves zomb" ) ||
+        // Live scenario run 2026-09-03: "¿Hay zombis cerca?" got no
+        // perception block and the model invented noises.  Anything asking
+        // whether hostiles or people are around is a present-tense scan.
+        lcmatch( player_line, "zombis cerca" ) ||
+        lcmatch( player_line, "zombi cerca" ) ||
+        lcmatch( player_line, "zombies cerca" ) ||
+        lcmatch( player_line, "enemigos cerca" ) ||
+        lcmatch( player_line, "alguien cerca" ) ||
+        lcmatch( player_line, "algo cerca" ) ||
+        lcmatch( player_line, "cerca hay" ) ||
+        lcmatch( player_line, "hay zomb" ) ||
+        lcmatch( player_line, "hay peligro" ) ||
+        lcmatch( player_line, "hay alguien" ) ||
+        lcmatch( player_line, "estamos solos" ) ||
+        lcmatch( player_line, "nos siguen" ) ||
+        lcmatch( player_line, "any zombies" ) ||
+        lcmatch( player_line, "zombies near" ) ||
+        lcmatch( player_line, "zombies around" ) ||
+        lcmatch( player_line, "anyone around" ) ||
+        lcmatch( player_line, "anything near" ) ||
+        lcmatch( player_line, "are we alone" ) ||
         lcmatch( player_line, "hay una" ) ||
         lcmatch( player_line, "hay un " ) ||
         lcmatch( player_line, "hay algun" ) ||
@@ -274,6 +298,39 @@ bool present_self_query( const std::string &player_line )
            lcmatch( player_line, "estas herid" ) ||
            lcmatch( player_line, "estas sangrando" ) ||
            lcmatch( player_line, "sangras" ) ||
+           // Live scenario run 2026-09-03: these phrasings reached the model
+           // with no health block at all, so a bleeding NPC answered "estoy
+           // bien".  They are questions about the NPC's own body or needs.
+           lcmatch( player_line, "necesitas ayuda" ) ||
+           lcmatch( player_line, "necesitas algo" ) ||
+           lcmatch( player_line, "necesitas descansar" ) ||
+           lcmatch( player_line, "necesitas vendas" ) ||
+           lcmatch( player_line, "necesitas agua" ) ||
+           lcmatch( player_line, "necesitas comer" ) ||
+           lcmatch( player_line, "puedes caminar" ) ||
+           lcmatch( player_line, "puedes andar" ) ||
+           lcmatch( player_line, "puedes correr" ) ||
+           lcmatch( player_line, "puedes moverte" ) ||
+           lcmatch( player_line, "puedes seguir" ) ||
+           lcmatch( player_line, "puedes pelear" ) ||
+           lcmatch( player_line, "aguantas" ) ||
+           lcmatch( player_line, "estas mal" ) ||
+           lcmatch( player_line, "te encuentras" ) ||
+           lcmatch( player_line, "te sientes" ) ||
+           lcmatch( player_line, "te han mordido" ) ||
+           lcmatch( player_line, "te mordi" ) ||
+           lcmatch( player_line, "tienes algo roto" ) ||
+           lcmatch( player_line, "algo roto" ) ||
+           lcmatch( player_line, "need help" ) ||
+           lcmatch( player_line, "need anything" ) ||
+           lcmatch( player_line, "can you walk" ) ||
+           lcmatch( player_line, "can you move" ) ||
+           lcmatch( player_line, "can you fight" ) ||
+           lcmatch( player_line, "are you bleeding" ) ||
+           lcmatch( player_line, "holding up" ) ||
+           lcmatch( player_line, "how are you" ) ||
+           lcmatch( player_line, "you okay" ) ||
+           lcmatch( player_line, "you alright" ) ||
            lcmatch( player_line, "como tienes el brazo" ) ||
            lcmatch( player_line, "como tienes la pierna" ) ||
            lcmatch( player_line, "como tienes la cabeza" ) ||
@@ -326,6 +383,29 @@ bool current_situation_query( const std::string &player_line )
            lcmatch( player_line, "como esta la cosa" ) ||
            lcmatch( player_line, "estamos seguros" ) ||
            lcmatch( player_line, "que hay aqui" ) ||
+           // Live scenario run 2026-09-03: "¿Es de noche?" three hours after
+           // sunset was answered "es de dia" because no environment block was
+           // routed.  Time, light and weather questions are situation queries.
+           lcmatch( player_line, "es de noche" ) ||
+           lcmatch( player_line, "es de dia" ) ||
+           lcmatch( player_line, "esta oscuro" ) ||
+           lcmatch( player_line, "se ve algo" ) ||
+           lcmatch( player_line, "se ve bien" ) ||
+           lcmatch( player_line, "que hora es" ) ||
+           lcmatch( player_line, "hace frio" ) ||
+           lcmatch( player_line, "hace calor" ) ||
+           lcmatch( player_line, "esta lloviendo" ) ||
+           lcmatch( player_line, "va a llover" ) ||
+           lcmatch( player_line, "como esta el clima" ) ||
+           lcmatch( player_line, "como esta el tiempo" ) ||
+           lcmatch( player_line, "que tiempo hace" ) ||
+           lcmatch( player_line, "donde estamos" ) ||
+           lcmatch( player_line, "is it dark" ) ||
+           lcmatch( player_line, "is it night" ) ||
+           lcmatch( player_line, "what time is it" ) ||
+           lcmatch( player_line, "is it cold" ) ||
+           lcmatch( player_line, "is it raining" ) ||
+           lcmatch( player_line, "where are we" ) ||
            lcmatch( player_line, "what is happening" ) ||
            lcmatch( player_line, "what is going on" ) ||
            lcmatch( player_line, "are we safe" ) ||
@@ -358,6 +438,28 @@ bool detailed_scene_query( const std::string &player_line )
            lcmatch( player_line, "describe everything" );
 }
 
+// Time of day, light and weather at the NPC's own tile.  The sensory context
+// lists creatures and tiles but never says whether it is night; the live
+// scenario run of 2026-09-03 had a follower claim daylight three hours after
+// sunset.  Same vanilla sources the spontaneous module already reads.
+std::string build_environment_context( const npc &who )
+{
+    const map &here = get_map();
+    const tripoint_bub_ms pos = who.pos_bub( here );
+    const float ambient = here.ambient_light_at( pos );
+    weather_manager &weather = get_weather();
+    std::ostringstream output;
+    output << "\n=== ENTORNO ACTUAL (HECHOS DE CDDA) ===\n"
+           << "es_de_noche=" << ( is_night( calendar::turn ) ? "si" : "no" ) << "\n"
+           << "luz_ambiente=" << static_cast<int>( ambient ) << "\n"
+           << "oscuro=" << ( ambient < 5.0f ? "si" : "no" ) << "\n"
+           << "exterior=" << ( here.is_outside( pos ) ? "si" : "no" ) << "\n"
+           << "clima_id=" << weather.weather_id.str() << "\n"
+           << "temperatura=" << print_temperature( weather.get_temperature( pos ), 1 ) << "\n"
+           << "- Usa estos valores para hablar de hora, luz o tiempo; no los deduzcas.\n";
+    return output.str();
+}
+
 std::string build_context_for_intent( const npc &who, const std::string &player_line,
                                       const npc_ai::context_intent intent )
 {
@@ -375,7 +477,8 @@ std::string build_context_for_intent( const npc &who, const std::string &player_
         case npc_ai::context_intent::perception_detailed:
             return npc_ai::build_sensory_context( who, true );
         case npc_ai::context_intent::current_situation:
-            return npc_ai::build_sensory_context( who, false ) +
+            return build_environment_context( who ) +
+                   npc_ai::build_sensory_context( who, false ) +
                    npc_ai::render_self_snapshot( npc_ai::build_self_snapshot(
                            who, npc_ai::self_snapshot_scope::physical_state ) );
         case npc_ai::context_intent::memory:
@@ -641,7 +744,15 @@ std::string build_npc_system_prompt( const npc &who,
                     << "cubrir, distraer, atacar o encargarte de alguien sin una "
                     "intencion confirmada.\n"
                     << "- Nunca emitas comandos internos como [[WATCH_ITEM:...]].\n"
-                    << "- Usa la personalidad como tendencia, nunca como caricatura.\n";
+                    << "- Usa la personalidad como tendencia, nunca como caricatura.\n"
+                    // Grade rule for speech, mirroring Combat Social's claim
+                    // limits: no detail stronger than the fact supplied.
+                    << "- Regla de grado: no anadas a un hecho detalles que no esten en "
+                    "los datos. Sin origen ni historia de un objeto, sin lugar para un "
+                    "dolor generico, sin sonidos u olores que no esten listados, sin "
+                    "pasado que no este en tu memoria.\n"
+                    << "- Si tu estado lista una parte grave, critica, rota, mordida, "
+                    "infectada o sangrando, nunca digas que estas bien ni la minimices.\n";
         } else {
             system
                     << "You are " << who.get_name()
@@ -662,7 +773,13 @@ std::string build_npc_system_prompt( const npc &who,
                     << "cover, distract, attack, or handle someone without confirmed "
                     "intent.\n"
                     << "- Never emit internal commands such as [[WATCH_ITEM:...]].\n"
-                    << "- Treat personality values as tendencies, never a caricature.\n";
+                    << "- Treat personality values as tendencies, never a caricature.\n"
+                    << "- Grade rule: add no detail a fact does not carry. No origin or "
+                    "history for an item, no location for generic pain, no sounds or "
+                    "smells not listed, no past that is not in your memory.\n"
+                    << "- If your state lists a part that is severe, critical, broken, "
+                    "bitten, infected, or bleeding, never say you are fine and never "
+                    "downplay it.\n";
         }
 
         switch( purpose ) {

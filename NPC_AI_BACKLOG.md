@@ -116,7 +116,14 @@ queda fuera de una primera versión.
 
 ## HALLAZGO 1 — La movilidad no llega al contexto del NPC
 
-**Estado:** detectado, NO corregido
+**Estado:** corregido parcialmente, 03/09/2026. `render_self_snapshot` añade
+`movilidad={puede_caminar; movilidad_reducida; piernas_rotas; brazos_rotos;
+necesita_ferula_o_medico; miembros_rotos}` derivado de `is_limb_broken`, y el
+Context Router enruta "¿puedes caminar?", "¿necesitas ayuda?" y similares a
+HEALTH. Verificado en vivo: con la pierna izquierda a 0 HP Liam responde
+"puedo caminar, pero con dificultad. Mi pierna izquierda está rota". Falta el
+criterio vanilla de incapacidad total y que el NPC lo comunique sin que se le
+pregunte (habla espontánea).
 **Fecha:** 29/08/2026
 
 Zachary tenía el brazo izquierdo roto, con el mensaje del juego *"Está roto.

@@ -247,7 +247,31 @@ std::string render_self_snapshot( const npc_self_snapshot &snapshot )
            << "; calor=" << ( snapshot.hot ? "true" : "false" )
            << "; sangrado=" << ( snapshot.bleeding ? "true" : "false" )
            << "; infeccion=" << ( snapshot.infected ? "true" : "false" )
-           << "; miembro_roto=" << ( snapshot.broken_limb ? "true" : "false" ) << "}\n\n"
+           << "; miembro_roto=" << ( snapshot.broken_limb ? "true" : "false" ) << "}\n";
+
+    // Mobility is derived from the same vanilla limb state.  A survivor with
+    // both legs broken cannot walk; one broken leg still moves, slowly.  This
+    // closes backlog finding 1 (mobility never reached the NPC context).
+    int broken_legs = 0;
+    int broken_arms = 0;
+    std::string broken_names;
+    for( const self_bodypart_observation &part : snapshot.bodyparts ) {
+        if( !part.broken ) {
+            continue;
+        }
+        if( part.id == "leg_l" || part.id == "leg_r" ) {
+            ++broken_legs;
+        } else if( part.id == "arm_l" || part.id == "arm_r" ) {
+            ++broken_arms;
+        }
+        broken_names += ( broken_names.empty() ? "" : "," ) + part.id;
+    }
+    output << "movilidad={puede_caminar=" << ( broken_legs >= 2 ? "false" : "true" )
+           << "; movilidad_reducida=" << ( broken_legs >= 1 ? "true" : "false" )
+           << "; piernas_rotas=" << broken_legs
+           << "; brazos_rotos=" << broken_arms
+           << "; necesita_ferula_o_medico=" << ( snapshot.broken_limb ? "true" : "false" )
+           << "; miembros_rotos=[" << broken_names << "]}\n\n"
            << "PARTES CORPORALES AFECTADAS:\n";
 
     bool affected_bodypart = false;
@@ -320,7 +344,19 @@ std::string render_self_snapshot( const npc_self_snapshot &snapshot )
         output << "- El inventario no fue consultado: no afirmes si posees o te falta un recurso.\n";
     }
     output
-           << "- Este estado ACTUAL reemplaza cualquier recuerdo conversacional contradictorio.\n";
+           << "- Este estado ACTUAL reemplaza cualquier recuerdo conversacional contradictorio.\n"
+           // Live scenario run 2026-09-03: with arm_r at 10/100 (grave) the
+           // model still answered "estoy bien" because the aggregates read 94 %
+           // health and pain 0.  Severity is an obligation, not one more field.
+           << "- Si alguna parte listada tiene severidad_dano=grave o critica, roto=true, "
+           "sangrado>0, mordida=true o infeccion=true, NO puedes decir que estas bien: "
+           "nombra esa parte y su estado.\n"
+           << "- salud_global_porcentaje y dolor_percibido NO anulan una parte grave; "
+           "una parte grave con dolor bajo sigue siendo grave.\n"
+           << "- puede_caminar=false significa que no puedes andar por ti mismo y necesitas "
+           "que te ayuden o te lleven.\n"
+           << "- No inventes el origen, la historia, la causa ni la localizacion de nada que "
+           "no aparezca aqui. Si un dato no trae parte del cuerpo, no digas donde.\n";
     return output.str();
 }
 
