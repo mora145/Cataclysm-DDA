@@ -1144,7 +1144,9 @@ std::string build_combat_batch_system_prompt(
                 "inutilizacion o muerte. Solo LIMB_DISABLED_CONFIRMED permite afirmar un miembro "
                 "roto/inutilizado y solo DEATH_CONFIRMED permite muerte. Si confirmed_outcome=no, "
                 "limitate literalmente al hecho observado. No prometas acciones tacticas no "
-                "confirmadas. Usa exclusivamente OUTPUT_LANGUAGE.\n" :
+                "confirmadas. attack_mode=melee es un golpe cuerpo a cuerpo: nunca lo llames "
+                "tiro, disparo ni bala; sin attack_mode no nombres el arma ni el modo. Usa "
+                "exclusivamente OUTPUT_LANGUAGE.\n" :
                 "Write short human dialogue for Cataclysm: Dark Days Ahead NPCs. C++ already chose "
                 "every speaker, known facts, priority, expiry, and audience. Your only authority is "
                 "expressive text. Never invent or complete facts. Each slot may use only its allowed "
@@ -1156,7 +1158,9 @@ std::string build_combat_batch_system_prompt(
                 "HIT_ONLY permits a claim that the named part was hit, never broken, disabled, or "
                 "killed. Only LIMB_DISABLED_CONFIRMED permits a disabled limb and only "
                 "DEATH_CONFIRMED permits death. When confirmed_outcome=no, state only the literal "
-                "observation. Never promise unconfirmed tactical actions. Use only OUTPUT_LANGUAGE.\n" );
+                "observation. Never promise unconfirmed tactical actions. attack_mode=melee is a "
+                "hand-to-hand blow: never call it a shot or bullet; without attack_mode do not "
+                "name the weapon or mode. Use only OUTPUT_LANGUAGE.\n" );
     system << "SPEAKER_PERSONALITIES\n";
     std::unordered_set<int> written;
     for( const batch_speaker_context *context : speakers ) {

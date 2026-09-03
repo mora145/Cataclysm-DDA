@@ -16,7 +16,10 @@
 
 #include "calendar.h"
 #include "cata_utility.h"
+#include "character.h"
+#include "game.h"
 #include "item_location.h"
+#include "line.h"
 #include "map.h"
 #include "npc.h"
 #include "weather.h"
@@ -438,6 +441,49 @@ bool detailed_scene_query( const std::string &player_line )
            lcmatch( player_line, "describe everything" );
 }
 
+// Player and allied NPCs the speaker can actually see right now, with
+// distance, so "no veo a nadie" can never be said with a friend adjacent.
+std::string visible_allies_line( const npc &who )
+{
+    const map &here = get_map();
+    std::ostringstream line;
+    int listed = 0;
+    const Character &player = get_player_character();
+    if( who.sees( here, player.pos_bub( here ) ) ) {
+        line << "el jugador (distancia " << rl_dist( who.pos_bub( here ), player.pos_bub( here ) ) << ")";
+        ++listed;
+    }
+    for( const npc *other : g->get_npcs_if( [&]( const npc & candidate ) {
+    return &candidate != &who && candidate.is_player_ally() && !candidate.is_dead() &&
+           who.sees( here, candidate.pos_bub( here ) );
+    } ) ) {
+        if( listed >= 6 ) {
+            line << ", y otros";
+            break;
+        }
+        // Visible condition only: what a person sees at a glance, never HP
+        // numbers the speaker could not know.  Round 4 had Liam announce
+        // "no veo problemas graves" beside a bleeding Kim.
+        static const efftype_id effect_bleed_id( "bleed" );
+        // Judge by the worst limb, not the body total: one arm at 10 % is a
+        // visible wound even when the rest is untouched.
+        int worst_percent = 100;
+        for( const bodypart_id &part : other->get_all_body_parts( get_body_part_flags::only_main ) ) {
+            const int part_max = other->get_part_hp_max( part );
+            if( part_max > 0 ) {
+                worst_percent = std::min( worst_percent, other->get_part_hp_cur( part ) * 100 / part_max );
+            }
+        }
+        const char *condition = worst_percent < 35 ? "malherido" : worst_percent < 75 ? "herido" :
+                                "sin heridas visibles";
+        line << ( listed > 0 ? ", " : "" ) << other->get_name() << " (distancia "
+             << rl_dist( who.pos_bub( here ), other->pos_bub( here ) ) << ", " << condition
+             << ( other->has_effect( effect_bleed_id ) ? ", sangrando" : "" ) << ")";
+        ++listed;
+    }
+    return listed > 0 ? line.str() : "ninguno";
+}
+
 // Time of day, light and weather at the NPC's own tile.  The sensory context
 // lists creatures and tiles but never says whether it is night; the live
 // scenario run of 2026-09-03 had a follower claim daylight three hours after
@@ -834,13 +880,19 @@ std::string build_npc_system_prompt( const npc &who,
                             "Puedes devolver DECISION=SILENT; si respondes, "
                             "devuelve solo DECISION=TALK "
                             "y TEXT=<respuesta breve>. No estas respondiendo al "
-                            "jugador.\n"
+                            "jugador. Si la frase habla de ti o de tu situacion, "
+                            "responde desde tu propio estado real, no preguntes por "
+                            "algo que te esta pasando a ti. No des instrucciones "
+                            "sobre acciones que el otro no ha hecho.\n"
                             : "TASK: another visible NPC has just spoken. Decide "
                             "whether to reply once. "
                             "You may return DECISION=SILENT; when replying, "
                             "return only DECISION=TALK "
                             "and TEXT=<short reply>. You are not answering the "
-                            "player.\n" );
+                            "player. If the line is about you or your situation, "
+                            "answer from your own real state instead of asking "
+                            "about something happening to you. Give no instructions "
+                            "about actions the other has not taken.\n" );
                 break;
             case npc_prompt_purpose::combat_social:
                 system << ( spanish ? "TAREA: decide solo si dices algo durante el "
@@ -1106,6 +1158,10 @@ std::string build_npc_prompt( const npc &who, const std::string &player_line,
            // Live scenario run 2026-09-03: with only this header routed, the
            // model invented where the bat came from.  State the gap outright.
            << "Origen de tus objetos: desconocido (no inventes donde los conseguiste)\n"
+           // Live scenario run 2026-09-03: on a HEALTH-only route Liam said
+           // "no veo a los demas" with Kim adjacent.  Allies in sight are cheap
+           // to list and belong in every prompt, whatever the route.
+           << "Companeros visibles ahora: " << visible_allies_line( who ) << "\n"
            << "Relacion con jugador: confianza=" << who.op_of_u.trust
            << "; miedo=" << who.op_of_u.fear << "; valor=" << who.op_of_u.value
            << "; ira=" << who.op_of_u.anger << "\n\n";

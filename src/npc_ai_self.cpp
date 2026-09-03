@@ -358,6 +358,8 @@ std::string render_self_snapshot( const npc_self_snapshot &snapshot )
            "una parte grave con dolor bajo sigue siendo grave.\n"
            << "- puede_caminar=false significa que no puedes andar por ti mismo y necesitas "
            "que te ayuden o te lleven.\n"
+           << "- dolor_percibido es la unica medida de dolor: con 0 no digas que te duele; "
+           "con menos de 15 es leve; solo por encima de 40 es fuerte.\n"
            << "- No inventes el origen, la historia, la causa ni la localizacion de nada que "
            "no aparezca aqui. Si un dato no trae parte del cuerpo, no digas donde.\n";
     return output.str();

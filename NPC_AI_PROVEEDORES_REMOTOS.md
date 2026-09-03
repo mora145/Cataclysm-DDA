@@ -153,12 +153,25 @@ Tercera pasada, tras cuatro ajustes más:
 Resultado: 21 escenarios, 27 llamadas, 0 incorrectos, latencia media 1,1 s.
 Gate `[npc_ai]` sin cambios: 209 / 4228.
 
-Queda abierto, de menor gravedad: en el lote JSON dos candidatas describieron
-fallos de melé como "tiro" y "disparo" (no se pronunciaron, pero el hecho no
-lleva modo de ataque explícito); Liam replicó "¡Apunta bien!" a Kim, que no
-disparó; con la pregunta enrutada solo a salud Liam dijo "no veo a los demás"
-teniendo a Kim al lado; y "me duele mucho" con dolor 0 al hablar de la pierna
-rota. Son cuestiones de grado, no de hechos falsos graves.
+Cuarta y quinta pasada, cinco ajustes más:
+
+| Cambio | Archivo | Resultado en vivo |
+|---|---|---|
+| El hecho `attack_missed` de melé dice "golpe cuerpo a cuerpo (sin disparo)" y lleva `attack_mode=melee`; el system prompt del lote prohíbe llamar tiro o disparo a un melé | `melee.cpp`, `npc_ai_combat_social.cpp` | Lote: "Liam falló un golpe", "Liam acertó un golpe en el torso", "El zombi está muerto". Ningún "tiro" |
+| Cabecera de todo prompt: "Companeros visibles ahora" con distancia, estado visible por la peor parte del cuerpo y sangrado | `npc_ai_context.cpp` | "Estamos bien, aunque Kim parece tener algún corte" en lugar de "no veo a los demás" |
+| Regla de dolor: `dolor_percibido` es la única medida; 0 no duele, <15 leve, >40 fuerte | `npc_ai_self.cpp` | Pierna rota con dolor 0: "Caminar me cuesta, tengo la pierna izquierda rota" sin "me duele mucho" |
+| Tarea de réplica NPC a NPC: responder desde el propio estado si la frase habla de ti; sin instrucciones sobre acciones no hechas | `npc_ai_context.cpp` | Sarah sigue floja ("¿Qué? ¿Dónde?"), ya no incoherente |
+| Escenario de golpes reales con tope de 150 golpes para asegurar la muerte confirmada | `npc_ai_live_scenarios_test.cpp` | Reproducible: `ENEMY_KILLED` y lote de 4 candidatas en cada corrida |
+
+Cinco rondas en total: de 3 incorrectos a 0; de 11 correctos a 17 de 21.
+Latencias medias por ronda: 8,7 s, 0,8 s, 1,1 s, 2,4 s, 0,8 s. Gate
+`[npc_ai]` estable en 209 / 4228.
+
+Queda abierto, todo de estilo: "¡Vamos, Kim! ¡Apunta bien!" como línea de
+combate hacia una aliada con rifle que no ha disparado (no es un hecho falso,
+pero es una instrucción gratuita); las réplicas NPC a NPC son cortas y poco
+informativas; "bastante" para un dolor de 10 en habla espontánea; y el modelo
+comete faltas menores de concordancia ("una golpe").
 
 ## Pendiente
 

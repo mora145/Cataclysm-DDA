@@ -503,7 +503,7 @@ TEST_CASE( "npc_ai_live_scenarios_against_remote_provider", "[.npc_ai_live_scena
             landed += zombie.melee_attack( liam, 10000.0f ) ? 1 : 0;
         }
         int swings = 0;
-        while( !zombie.is_dead() && swings < 40 ) {
+        while( !zombie.is_dead() && swings < 150 ) {
             liam.set_moves( 1000 );
             liam.melee_attack( zombie, false );
             ++swings;

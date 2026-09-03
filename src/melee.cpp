@@ -680,9 +680,13 @@ bool Character::melee_attack_abstract( Creature &t, bool allow_special,
     Character &player_character = get_player_character();
     if( !hits ) {
         if( !t.is_hallucination() ) {
+            // Live scenario run 2026-09-03: a plain "fallo un ataque" was
+            // narrated as "fallo el tiro".  Name the mode in the fact and tag
+            // the event so the prompt can enforce it.
             npc_ai::record_creature_world_event( npc_ai::world_event_type::attack_missed,
                     this, &t, 48, "Character::melee_attack_abstract",
-                    disp_name() + " fallo un ataque contra " + t.disp_name() + "." );
+                    disp_name() + " fallo un golpe cuerpo a cuerpo contra " + t.disp_name() +
+                    " (sin disparo).", true, 0, 0, 0, 0, 0, {}, 0, "melee" );
             if( t.as_character() != nullptr ) {
                 npc_ai::record_creature_world_event( npc_ai::world_event_type::dodge,
                         &t, this, 52, "Character::melee_attack_abstract",
