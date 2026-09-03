@@ -178,7 +178,7 @@ using ai_prompt_only_request_executor =
 class ai_request_queue
 {
     public:
-        explicit ai_request_queue( ai_request_executor executor = ask_ollama,
+        explicit ai_request_queue( ai_request_executor executor = ask_llm,
                                    bool start_automatically = true );
         explicit ai_request_queue( ai_prompt_only_request_executor executor,
                                    bool start_automatically = true );

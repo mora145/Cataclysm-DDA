@@ -160,6 +160,71 @@ TEST_CASE( "ollama_request_contract_and_response_parser_are_explicit",
     CHECK_FALSE( std::filesystem::exists( std::filesystem::u8path( cleanup.path ) ) );
 }
 
+TEST_CASE( "gemini_request_contract_and_response_parser_are_explicit",
+           "[npc_ai][npc_ai_gemini][npc_ai_async]" )
+{
+    // Wire format: system instruction, single user turn, sampling config and
+    // reasoning disabled.  The API key is never part of the body.
+    const std::string body = npc_ai::build_gemini_request_json( "hola \"NPC\"", "sistema" );
+    CHECK( body.find( "\"system_instruction\":{\"parts\":[{\"text\":\"sistema\"}]}" ) !=
+           std::string::npos );
+    CHECK( body.find( "\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"hola \\\"NPC\\\"\"}]}]" )
+           != std::string::npos );
+    CHECK( body.find( "\"temperature\":0.4" ) != std::string::npos );
+    CHECK( body.find( "\"topP\":0.85" ) != std::string::npos );
+    CHECK( body.find( "\"topK\":20" ) != std::string::npos );
+    CHECK( body.find( "\"thinkingConfig\":{\"thinkingBudget\":0}" ) != std::string::npos );
+    CHECK( body.find( "key" ) == std::string::npos );
+
+    const npc_ai::ai_response parsed = npc_ai::parse_gemini_response_json(
+                                           "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"respuesta \"},"
+                                           "{\"text\":\"limpia\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],"
+                                           "\"usageMetadata\":{\"promptTokenCount\":321,\"candidatesTokenCount\":17,"
+                                           "\"totalTokenCount\":338},\"modelVersion\":\"gemini-2.5-flash\"}", 1 );
+    REQUIRE( parsed.success );
+    CHECK( parsed.text == "respuesta limpia" );
+    CHECK( parsed.http_completed_ms == 1 );
+    CHECK( parsed.parse_completed_ms >= parsed.http_completed_ms );
+    CHECK( parsed.prompt_eval_count == 321 );
+    CHECK( parsed.eval_count == 17 );
+    CHECK_FALSE( parsed.context_truncated );
+
+    // A cut-off answer is flagged exactly like an Ollama context overflow so
+    // Combat Social discards it instead of validating half a JSON batch.
+    const npc_ai::ai_response truncated = npc_ai::parse_gemini_response_json(
+                                              "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"[{\\\"slot\\\":1\"}]},"
+                                              "\"finishReason\":\"MAX_TOKENS\"}]}" );
+    REQUIRE( truncated.success );
+    CHECK( truncated.context_truncated );
+
+    const npc_ai::ai_response quota = npc_ai::parse_gemini_response_json(
+                                          "{\"error\":{\"code\":429,\"message\":\"Quota exceeded\","
+                                          "\"status\":\"RESOURCE_EXHAUSTED\"}}" );
+    CHECK_FALSE( quota.success );
+    CHECK( quota.error.find( "429" ) != std::string::npos );
+    CHECK( quota.error.find( "RESOURCE_EXHAUSTED" ) != std::string::npos );
+
+    const npc_ai::ai_response blocked = npc_ai::parse_gemini_response_json(
+                                            "{\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}" );
+    CHECK_FALSE( blocked.success );
+    CHECK( blocked.error.find( "SAFETY" ) != std::string::npos );
+
+    const npc_ai::ai_response empty = npc_ai::parse_gemini_response_json(
+                                          "{\"candidates\":[{\"finishReason\":\"SAFETY\"}]}" );
+    CHECK_FALSE( empty.success );
+
+    const npc_ai::ai_response invalid = npc_ai::parse_gemini_response_json( "not-json" );
+    CHECK_FALSE( invalid.success );
+    CHECK( invalid.error.find( "Invalid JSON from Gemini" ) != std::string::npos );
+
+    // Without a key the remote path fails closed before touching the network.
+    if( !npc_ai::gemini_api_key_available() ) {
+        const npc_ai::ai_response no_key = npc_ai::ask_gemini( "hola", "sistema" );
+        CHECK_FALSE( no_key.success );
+        CHECK( no_key.error.find( "CDDA_NPC_AI_GEMINI_API_KEY" ) != std::string::npos );
+    }
+}
+
 TEST_CASE( "ollama_debug_gate_records_prompt_response_and_aggregate_latency",
            "[npc_ai][npc_ai_ollama][npc_ai_async]" )
 {

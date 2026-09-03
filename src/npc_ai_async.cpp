@@ -1431,7 +1431,7 @@ void reset_ai_completion_clock_for_test()
 void reset_ai_request_system_for_test()
 {
     reset_ai_completion_clock_for_test();
-    get_ai_request_queue().set_executor_for_test( ask_ollama, true );
+    get_ai_request_queue().set_executor_for_test( ask_llm, true );
     get_ai_request_queue().invalidate_session();
 }
 
