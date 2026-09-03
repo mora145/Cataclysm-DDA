@@ -25,6 +25,7 @@
 #include "lang_stats.h"
 #include "line.h"
 #include "mapsharing.h"
+#include "npc_ai_client.h"
 #include "output.h"
 #include "path_info.h"
 #include "point.h"
@@ -3981,6 +3982,43 @@ std::string options_manager::show( bool ingame, const bool world_options_only, b
                 world_generator->active_world->save();
             }
             g->on_options_changed();
+
+            // CDDA-AI: any change to the NPC AI group triggers one visible
+            // connection test so the player learns right here whether the
+            // key file and the provider work, instead of waiting for an NPC
+            // to stay silent in game.
+            bool npc_ai_changed = false;
+            for( const auto &iter : OPTIONS_OLD ) {
+                if( iter.first.rfind( "NPC_AI_", 0 ) == 0 &&
+                    OPTIONS.count( iter.first ) > 0 && !( iter.second == OPTIONS[iter.first] ) ) {
+                    npc_ai_changed = true;
+                    break;
+                }
+            }
+            if( npc_ai_changed ) {
+                popup.message( "%s", _( "Please wait…\nTesting the NPC AI connection…" ) );
+                ui_manager::redraw();
+                refresh_display();
+                const npc_ai::llm_connection_report report = npc_ai::test_llm_connection();
+                std::string key_line;
+                if( report.provider != "ollama" ) {
+                    key_line = report.key_source == "env" ?
+                               _( "API key: from environment variable" ) :
+                               report.key_source == "file" ?
+                               string_format( _( "API key: from file %s" ), npc_ai::remote_api_key_file_path() ) :
+                               string_format( _( "API key: NOT FOUND.  Paste it on the first line of\n%s\n(a template with instructions was just created there)" ),
+                                              npc_ai::remote_api_key_file_path() );
+                }
+                if( report.ok ) {
+                    ::popup( _( "NPC AI connection OK\n\nProvider: %s\nModel: %s\nEndpoint: %s\n%s\nReply in %d ms: \"%s\"" ),
+                             report.provider, report.model, report.endpoint, key_line,
+                             static_cast<int>( report.elapsed_ms ), report.detail );
+                } else {
+                    ::popup( _( "NPC AI connection FAILED\n\nProvider: %s\nModel: %s\nEndpoint: %s\n%s\nAfter %d ms: %s\n\nThe game keeps working; NPCs will stay silent until this is fixed." ),
+                             report.provider, report.model, report.endpoint, key_line,
+                             static_cast<int>( report.elapsed_ms ), report.detail );
+                }
+            }
         } else {
             lang_changed = false;
             terminal_size_changed = false;

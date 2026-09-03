@@ -91,6 +91,25 @@ ai_response ask_gemini( const std::string &prompt,
 ai_response ask_llm( const std::string &prompt,
                      const std::string &system_prompt );
 
+// Where the active remote provider will look for its API key file, and a
+// one-time template written there (comment lines only) so the player finds a
+// file to paste into instead of inventing a name.  Returns the full path.
+std::string remote_api_key_file_path();
+std::string ensure_remote_api_key_template();
+
+// One tiny round trip against the active provider with the current settings.
+// Blocking; meant for the options screen and diagnostics, never for gameplay.
+struct llm_connection_report {
+    bool ok = false;
+    std::string provider;
+    std::string model;
+    std::string endpoint;
+    std::string detail;      // model reply when ok, error text otherwise
+    std::string key_source;  // "env", "file", or "" for local / missing
+    std::int64_t elapsed_ms = 0;
+};
+llm_connection_report test_llm_connection();
+
 } // namespace npc_ai
 
 #endif // CATA_SRC_NPC_AI_CLIENT_H

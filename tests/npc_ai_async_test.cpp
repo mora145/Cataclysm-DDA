@@ -366,6 +366,22 @@ TEST_CASE( "remote_providers_answer_a_grounded_spanish_prompt_live",
         WARN( "CDDA_NPC_AI_OPENAI_API_KEY not set; OpenAI-compatible live check skipped" );
     }
 
+    // The options-screen connection test, exercised end to end.
+    if( npc_ai::openai_api_key_available() && std::getenv( "CDDA_NPC_AI_PROVIDER" ) == nullptr ) {
+        options_manager::cOpt &provider = get_options().get_option( "NPC_AI_PROVIDER" );
+        const std::string previous = provider.getValue();
+        provider.setValue( "deepinfra" );
+        const npc_ai::llm_connection_report report = npc_ai::test_llm_connection();
+        provider.setValue( previous );
+        WARN( "connection test: ok=" << report.ok << " provider=" << report.provider
+              << " model=" << report.model << " endpoint=" << report.endpoint
+              << " key_source=" << report.key_source << " ms=" << report.elapsed_ms
+              << " detail=" << report.detail );
+        CHECK( report.ok );
+        CHECK( report.provider == "openai" );
+        CHECK_FALSE( report.key_source.empty() );
+    }
+
     if( npc_ai::gemini_api_key_available() ) {
         const npc_ai::ai_response r = npc_ai::ask_gemini( prompt, system );
         INFO( "gemini error: " << r.error );

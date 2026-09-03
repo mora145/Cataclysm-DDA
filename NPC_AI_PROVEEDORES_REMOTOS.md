@@ -55,6 +55,24 @@ ids de modelo son propios de cada servicio, así que ahí hay que fijar el
 modelo por variable de entorno. El cambio se aplica en la siguiente petición,
 sin reiniciar. Las variables de entorno, si existen, mandan sobre las opciones.
 
+### Poner la clave y comprobar la conexión
+
+1. En Opciones elige el proveedor remoto y guarda. El juego hace en ese
+   momento **una prueba de conexión** y muestra el resultado en una ventana:
+   proveedor, modelo, endpoint, de dónde salió la clave, y la respuesta con su
+   latencia, o el error exacto si falló. Sin clave, la ventana dice la ruta
+   completa del archivo donde hay que pegarla.
+2. Si el archivo de la clave no existía, el juego **lo crea vacío con
+   instrucciones** dentro (líneas que empiezan por `#`). Ábrelo, pega la clave
+   en la primera línea sin `#`, guarda. No hace falta reiniciar.
+3. Vuelve a Opciones, cambia cualquier opción de NPC AI (o cámbiala y vuelve a
+   ponerla) y guarda: la prueba se repite y debería decir "NPC AI connection
+   OK".
+
+Si ya habías creado tu propio archivo con otro nombre, por ejemplo
+`config\api.txt`, basta con escribir `api.txt` en la opción "API key: file
+name" o renombrarlo a `npc_ai_api_key.txt`.
+
 **La clave nunca es una opción**, porque `options.json` se comparte y se pega
 en reportes. El juego la busca en este orden:
 

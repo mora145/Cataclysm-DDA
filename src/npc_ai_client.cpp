@@ -398,6 +398,17 @@ std::string config_file_first_line( const char *filename )
 // reports.  Sources, in order: environment variable, a provider-specific key
 // file, then the generic key file, all inside the config folder.  Never
 // logged, never copied anywhere else.
+// File NAME from the in-game option; a player who pasted the key itself into
+// that option gets nothing, never a request with it.
+std::string generic_api_key_file_name()
+{
+    std::string file = game_option_string( "NPC_AI_API_KEY_FILE" );
+    if( file.empty() || file.find_first_of( "/\\" ) != std::string::npos ) {
+        file = "npc_ai_api_key.txt";
+    }
+    return file;
+}
+
 std::string remote_api_key( const char *env_name, const char *provider_file )
 {
     std::string key = environment_value( env_name );
@@ -405,15 +416,29 @@ std::string remote_api_key( const char *env_name, const char *provider_file )
         key = config_file_first_line( provider_file );
     }
     if( key.empty() ) {
-        // File NAME from the in-game option; a player who pasted the key
-        // itself into that option gets nothing, never a request with it.
-        std::string file = game_option_string( "NPC_AI_API_KEY_FILE" );
-        if( file.empty() || file.find_first_of( "/\\" ) != std::string::npos ) {
-            file = "npc_ai_api_key.txt";
-        }
-        key = config_file_first_line( file.c_str() );
+        key = config_file_first_line( generic_api_key_file_name().c_str() );
     }
     return key;
+}
+
+// Which source the active provider's key came from, for diagnostics only.
+std::string remote_api_key_source( const char *env_name, const char *provider_file )
+{
+    if( !environment_value( env_name ).empty() ) {
+        return "env";
+    }
+    if( !config_file_first_line( provider_file ).empty() ||
+        !config_file_first_line( generic_api_key_file_name().c_str() ).empty() ) {
+        return "file";
+    }
+    return std::string();
+}
+
+std::string missing_key_message( const char *env_name )
+{
+    return "No API key found. Paste it on the first line of " + remote_api_key_file_path() +
+           " (a template with instructions was created there) or set the environment variable " +
+           env_name + ".";
 }
 
 std::string gemini_api_key()
@@ -784,7 +809,8 @@ ai_response ask_gemini( const std::string &prompt,
                         const std::string &system_prompt )
 {
     if( !gemini_api_key_available() ) {
-        return {false, "", "CDDA_NPC_AI_GEMINI_API_KEY is not set."};
+        ensure_remote_api_key_template();
+        return {false, "", missing_key_message( "CDDA_NPC_AI_GEMINI_API_KEY" )};
     }
     // Keep the same byte guard as Ollama.  Gemini accepts far more, but the
     // prompt builders are budgeted around this limit and it bounds cost.
@@ -1045,7 +1071,8 @@ ai_response ask_openai( const std::string &prompt,
                         const std::string &system_prompt )
 {
     if( !openai_api_key_available() ) {
-        return {false, "", "CDDA_NPC_AI_OPENAI_API_KEY is not set."};
+        ensure_remote_api_key_template();
+        return {false, "", missing_key_message( "CDDA_NPC_AI_OPENAI_API_KEY" )};
     }
     if( !ollama_prompt_fits_context( prompt, system_prompt ) ) {
         return {false, "", "NPC AI prompt exceeds the configured context budget."};
@@ -1090,6 +1117,83 @@ ai_response ask_openai( const std::string &prompt,
     return parse_openai_response_json( post.body, monotonic_ms() );
 
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// Key file guidance and connection test
+// ---------------------------------------------------------------------------
+
+std::string remote_api_key_file_path()
+{
+    return PATH_INFO::config_dir() + generic_api_key_file_name();
+}
+
+std::string ensure_remote_api_key_template()
+{
+    const std::string path = remote_api_key_file_path();
+    std::ifstream existing( path, std::ios::binary );
+    if( existing.good() ) {
+        return path;
+    }
+    existing.close();
+    std::ofstream out( path, std::ios::binary | std::ios::trunc );
+    if( out ) {
+        out << "# CDDA AI - clave de API del proveedor remoto de los NPC\n"
+            "# Pega tu clave en la primera linea que no empiece por #, sin espacios ni comillas.\n"
+            "# Guarda este archivo y vuelve al juego: no hace falta reiniciar.\n"
+            "# La clave no se comparte con nadie mas que el proveedor elegido y nunca se escribe en los logs.\n"
+            "#\n"
+            "# CDDA AI - API key for the remote NPC provider\n"
+            "# Paste your key on the first line that does not start with #, no spaces or quotes.\n"
+            "# Save and return to the game; no restart needed.\n"
+            "\n";
+    }
+    return path;
+}
+
+llm_connection_report test_llm_connection()
+{
+    llm_connection_report report;
+    report.provider = active_llm_provider_name();
+    const std::int64_t started = monotonic_ms();
+    ai_response response;
+    switch( active_llm_provider() ) {
+        case llm_provider::gemini:
+            report.model = gemini_model_name();
+            report.endpoint = gemini_host;
+            report.key_source = remote_api_key_source( "CDDA_NPC_AI_GEMINI_API_KEY",
+                                "npc_ai_api_key_gemini.txt" );
+            if( report.key_source.empty() ) {
+                ensure_remote_api_key_template();
+            }
+            gemini_backoff_until_ms.store( 0, std::memory_order_relaxed );
+            response = ask_gemini( "Responde unicamente con la palabra OK.",
+                                   "Eres una prueba de conexion. Responde solo OK." );
+            break;
+        case llm_provider::openai:
+            report.model = openai_model_name();
+            report.endpoint = openai_host() + openai_path();
+            report.key_source = remote_api_key_source( "CDDA_NPC_AI_OPENAI_API_KEY",
+                                "npc_ai_api_key_deepinfra.txt" );
+            if( report.key_source.empty() ) {
+                ensure_remote_api_key_template();
+            }
+            openai_backoff_until_ms.store( 0, std::memory_order_relaxed );
+            response = ask_openai( "Responde unicamente con la palabra OK.",
+                                   "Eres una prueba de conexion. Responde solo OK." );
+            break;
+        case llm_provider::ollama:
+        default:
+            report.model = ollama_model_name();
+            report.endpoint = "http://localhost:11434/api/generate";
+            response = ask_ollama( "Responde unicamente con la palabra OK.",
+                                   "Eres una prueba de conexion. Responde solo OK." );
+            break;
+    }
+    report.elapsed_ms = monotonic_ms() - started;
+    report.ok = response.success && !response.text.empty();
+    report.detail = response.success ? response.text : response.error;
+    return report;
 }
 
 // ---------------------------------------------------------------------------
